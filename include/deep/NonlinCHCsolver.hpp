@@ -3,6 +3,8 @@
 
 #include "HornNonlin.hpp"
 
+#include <fstream>
+
 using namespace std;
 using namespace boost;
 
@@ -27,6 +29,8 @@ namespace ufo
     getCombinations(in, out, pos + 1);
   }
 
+  enum class Result_t {SAT=0, UNSAT, UNKNOWN};
+
   class NonlinCHCsolver
   {
     private:
@@ -43,6 +47,7 @@ namespace ufo
     int globalIter = 0;
     int strenBound;
     bool debug = false;
+    map<Expr, Expr> extend;
 
     public:
 
@@ -179,14 +184,20 @@ namespace ufo
     // subsumes bootstrapping (ssince facts and queries are considered)
     void propagate(bool fwd = true)
     {
+      // outs() << "Entry\n";//DEBUG
+      // printCands(false);//DEBUG
       int szInit = declsVisited.size();
       for (auto & hr : ruleManager.chcs)
       {
+	//outs() << "hrd: " << *(hr.dstRelation) << "\n";//DEBUG
         bool dstVisited = declsVisited.find(hr.dstRelation) != declsVisited.end();
-        bool srcVisited = hr.isFact || (hr.isInductive && hasNoDef(hr.dstRelation));
+	bool srcVisited = hr.isFact || (hr.isInductive && hasNoDef(hr.dstRelation));
+	//bool srcVisited = hr.isFact ;
+	// outs() << "sv: " << srcVisited << " fwd: " << fwd << " dv: " << dstVisited << "\n";//DEBUG
         for (auto & a : hr.srcRelations)
           srcVisited |= declsVisited.find(a) != declsVisited.end();
 
+	// outs() << "sv: " << srcVisited << " fwd: " << fwd << " dv: " << dstVisited << "\n";//DEBUG
         if (fwd && srcVisited && !dstVisited)
         {
           propagateCandidatesForward(hr);
@@ -197,9 +208,14 @@ namespace ufo
           propagateCandidatesBackward(hr);
           declsVisited.insert(hr.srcRelations.begin(), hr.srcRelations.end());
         }
+	// printCands(false);//DEBUG
+
       }
 
       if (declsVisited.size() != szInit) propagate(fwd);
+      // outs() << "Exit\n";//DEBUG
+      // printCands(false);//DEBUG
+
     }
 
     void propagateCandidatesForward(HornRuleExt& hr)
@@ -223,15 +239,25 @@ namespace ufo
           }
         }
 
+	// //DEBUG
+	// for (auto c : candidates[hr.dstRelation])
+	//   outs() << "before: " << *c << "\n";
+	
         if (hr.isInductive)   // get candidates of form [ <var> mod <const> = <const> ]
           retrieveDeltas (body, hr.srcVars[0], hr.dstVars, candidates[hr.dstRelation]);
 
+
         preproGuessing(conjoin(all, m_efac), hr.dstVars, ruleManager.invVars[hr.dstRelation], candidates[hr.dstRelation]);
+	// //DEBUG
+	// for (auto c : candidates[hr.dstRelation])
+	//   outs() << "after: " << *c << "\n";
+
       }
     }
 
     void propagateCandidatesBackward(HornRuleExt& hr, bool forceConv = false)
     {
+      // outs() << "in backward\n";//DEBUG
 //      for (auto & hr : ruleManager.chcs)
       {
         if (hr.isFact) return;
@@ -365,7 +391,16 @@ namespace ufo
               if (numTrueCands > 0 && !trueCands[i]) continue;
 
               Expr r = rels[i];
-              if (!u.isSat(a, conjoin(curCnd, m_efac))) return;  // need to recheck because the solver has been reset
+	      if (extend.find(r) != extend.end()) {
+		// outs () << "r: " << *r << "\n"; //DEBUG
+		// outs () << "cnj: " << *mk<AND>(extend[r], conjoin(curCnd, m_efac)) << "\n"; //DEBUG
+		if (!u.isSat(a, mk<AND>(extend[r], conjoin(curCnd, m_efac)))) {
+		  // outs () << "unsat!\n"; //DEBUG
+		  return;  // need to recheck because the solver has been reset
+		}
+	      } else {
+		if (!u.isSat(a, conjoin(curCnd, m_efac))) return;  // need to recheck because the solver has been reset
+	      }
               if (processed.find(r) != processed.end()) continue;
 
               invVars.clear();
@@ -391,6 +426,7 @@ namespace ufo
               if (trueRels.size() != 1)                  // again, for fairness heuristic:
                 all.insert(u.getModel(allVarsExcept));
 
+	      // outs() << "model: " << *(u.getModel(allVarsExcept)) << "\n";//DEBUG
               // in the case of nonlin, invVars is empty, so no renaming happens:
 
               preproGuessing(conjoin(all, m_efac), vars, invVars, backGuesses, true, false);
@@ -400,6 +436,9 @@ namespace ufo
                 getConj(conjoin(backGuesses, m_efac), candidates[r]);
                 histRec.push_back(conjoin(backGuesses, m_efac));
                 allGuesses.insert(backGuesses.begin(), backGuesses.end());
+		//DEBUG
+		// for (auto ag : allGuesses)
+		//   outs() << "AG: " << *ag << "\n";
               }
               else
               {
@@ -640,12 +679,19 @@ namespace ufo
         }
       }
     }
-
-    void printCands(bool unsat = true, bool simplify = false)
+    
+    void printCands(bool unsat = true, map<Expr, ExprSet> partialsolns = map<Expr,ExprSet>(), bool nonmaximal = false, bool simplify = false)
     {
-      if (unsat) outs () << "unsat\n";
+      if (unsat)
+      {
+	outs () << "unsat";
+	if (nonmaximal)
+	  outs () << " (may not be maximal solution) \n";
+	else
+	  outs () << "\n";
+      }
 
-      for (auto & a : candidates)
+      for (auto & a : partialsolns.empty() ? candidates : partialsolns)
       {
         outs () << "(define-fun " << *a.first << " (";
         for (auto & b : ruleManager.invVars[a.first])
@@ -1054,7 +1100,7 @@ namespace ufo
       return true;
     }
 
-    void guessAndSolve()
+    Result_t guessAndSolve()
     {
       vector<HornRuleExt*> worklist;
       for (auto & hr : ruleManager.chcs)
@@ -1075,11 +1121,18 @@ namespace ufo
           }
           declsVisited.clear();
           declsVisited.insert(ruleManager.failDecl);
-          propagate(fwd);
+	  // outs() << "1st\n";//DEBUG
+	  // printCands(false);//DEBUG
+	  // outs() << "fwd: " << fwd << "\n";//DEBUG
+	  propagate(fwd);
           filterUnsat();
+	  // outs() << "2nd\n";//DEBUG
+	  // printCands(false);//DEBUG
           if (fwd) multiHoudini(worklist);  // i.e., weaken
           else strengthen();
-          if (checkAllOver(true)) return printCands();
+	  // outs() << "3rd\n";//DEBUG
+	  // printCands(false);//DEBUG
+          if (checkAllOver(true)) return Result_t::UNSAT;
         }
         if (equalCands(candidatesTmp)) break;
         if (hasArrays) break; // just one iteration is enough for arrays (for speed)
@@ -1088,28 +1141,160 @@ namespace ufo
       getImplicationGuesses(candidates);  // seems broken now; to revisit completely
       filterUnsat();
       multiHoudini(worklist);
-      if (checkAllOver(true)) return printCands();
+      if (checkAllOver(true)) return Result_t::UNSAT;
 
       for (auto tgt : ruleManager.decls) arrayGuessing(tgt->left());
       filterUnsat();
       multiHoudini(worklist);
-      if (checkAllOver(true)) return printCands();
-      outs () << "unknown\n";
+      if (checkAllOver(true)) return Result_t::UNSAT;
+
+      return Result_t::UNKNOWN;
     }
 
+    ExprVector getRels(const vector<string> & relsStr)
+    {
+
+      ExprVector rels;
+
+      for (auto rs : relsStr) 
+	for (auto d : ruleManager.decls) 
+	  if (lexical_cast<string>(*(d->left())) == rs)
+	    rels.push_back(d->left());
+	
+      return rels;      
+    }
+
+    //ugly inefficient hack for time being; better way is to modify solveIncrementally and call it with a new rule
+    Result_t checkCex (const Expr & rel, const string & smt)
+    {
+      stringstream newRule;
+
+      for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	newRule << "(declare-var " << **itr << " " << u.varType(*itr) << ")\n";
+      }
+      
+      newRule << "(rule (=> ";
+      u.print(conjoin(candidates[rel], m_efac), newRule);
+      newRule << "( " << *rel;
+      for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	if (itr != ruleManager.invVars[rel].begin())
+	  newRule << ",";
+	newRule << " " << *itr;
+      }
+      newRule << ")))\n";
+
+      string newSmt = tmpnam(nullptr);
+      newSmt += ".smt2";
+      // outs() << "newsmt: " << newSmt << "\n";//DEBUG
+      ifstream oldSmtFile(smt);
+      ofstream newSmtFile(newSmt);
+      string filestr;
+      //add above created new CHCs just before query command
+      while (getline(oldSmtFile, filestr)) {
+	if (filestr.find("query") != string::npos)
+	  newSmtFile << newRule.str() << "\n";
+	newSmtFile << filestr;
+      }      
+      oldSmtFile.close();
+      newSmtFile.close();      
+
+      ExprFactory nm_efac;
+      EZ3 nz3(nm_efac);
+      CHCs nrm(nm_efac, nz3);
+      nrm.parse(newSmt);
+      NonlinCHCsolver newNonlin(nrm, 1);
+      ExprVector query;
+      query.push_back(nrm.failDecl);
+      vector<ExprVector> empt;
+
+      return newNonlin.solveIncrementally(14, 0, query, empt);
+    }
+            
+    
+    void maximalSolve (const vector<string> & relsOrderStr, const string & smt)
+    {
+      	ExprVector relsOrder = getRels(relsOrderStr);
+	if (relsOrder.size() == 0)
+	  relsOrder = ruleManager.getUnderConsRels();
+
+      int curRel = 0;
+      map<Expr, ExprSet> prevSoln;      
+
+      Result_t res = guessAndSolve();
+      
+      if (hasArrays) {
+	switch (res) {
+	case Result_t::UNSAT: printCands(); break;
+	case Result_t::UNKNOWN: outs() << "unknown\n"; break;
+	case Result_t::SAT: outs() << "sat\n"; break;	  
+	}
+	return;
+      }
+
+      if (res == Result_t::UNKNOWN && (prevSoln.empty() || relsOrder.size() == 0)) {
+	outs() << "unknown\n";
+	return;
+      }
+
+      while (true) {
+	
+	if (res == Result_t::UNKNOWN) {
+
+	  // outs() << "res is unknown\n"; //DEBUG
+	  assert(curRel < relsOrder.size());
+
+	  Result_t cexRes = checkCex(relsOrder[curRel], smt);
+
+	  if (cexRes == Result_t::SAT) {
+	    // outs() << "cex is sat\n"; //DEBUG
+	    if (curRel == relsOrder.size() - 1) {
+	      printCands(true, prevSoln);
+	      return;	      
+	    } else {
+	      curRel++;
+	    }
+	    
+	  } else {
+	    printCands(true, prevSoln, true);
+	    return;
+	  }
+	  
+	} else if (res == Result_t::UNSAT) {
+	  // outs() << "res is unsat\n"; //DEBUG
+	  prevSoln.clear();
+	  for (auto e : candidates) {
+	    for (auto c : e.second) { 
+	      prevSoln[e.first].insert(c);
+	    }
+	  }
+	  // outs() << "rel: " << *(relsOrder[curRel]) << "\n"; //DEBUG
+	  extend[relsOrder[curRel]] = mk<NEG>(conjoin(candidates[relsOrder[curRel]], m_efac));
+	  // outs() << "extend: " << *(extend[relsOrder[curRel]]) << "\n"; //DEBUG
+	  // printCands(false);//DEBUG
+	  
+	} else {
+	  assert(0);
+	}
+	
+	candidates.clear();
+	res = guessAndSolve();
+      }
+      
+    }
+    
     // naive solving, without invariant generation
-    int solveIncrementally(int bound, int unr, ExprVector& rels, vector<ExprVector>& args)
+    Result_t solveIncrementally(int bound, int unr, ExprVector& rels, vector<ExprVector>& args)
     {
       if (unr > bound)       // maximum bound reached
       {
-        return 2;
+        return Result_t::UNKNOWN;
       }
       else if (rels.empty()) // base case == init is reachable
       {
-        return 0;
+        return Result_t::SAT;
       }
 
-      int res = 1;
+      Result_t res = Result_t::UNSAT;
 
       // reserve copy;
       auto ssaStepsTmp = ssaSteps;
@@ -1132,7 +1317,7 @@ namespace ufo
         }
         if (applicable.empty())
         {
-          return 1;         // nothing is reachable; thus it is safe here
+          return Result_t::UNSAT;         // nothing is reachable; thus it is safe here
         }
         applicableRules.push_back(applicable);
       }
@@ -1177,9 +1362,9 @@ namespace ufo
 
         if (u.isSat(conjoin(ssaSteps, m_efac))) // TODO: optimize with incremental SMT solving (i.e., using push / pop)
         {
-          int res_tmp = solveIncrementally(bound, unr + 1, rels2, args2);
-          if (res_tmp == 0) return 0;           // bug is found for some combination
-          else if (res_tmp == 2) res = 2;
+          Result_t res_tmp = solveIncrementally(bound, unr + 1, rels2, args2);
+          if (res_tmp == Result_t::SAT) return Result_t::SAT;           // bug is found for some combination
+          else if (res_tmp == Result_t::UNKNOWN) res = Result_t::UNKNOWN;
         }
       }
       return res;
@@ -1193,24 +1378,34 @@ namespace ufo
       vector<ExprVector> empt;
       switch (solveIncrementally (bound, 0, query, empt))
       {
-        case 0: outs () << "sat\n"; break;
-        case 1: outs () << "unsat\n"; break;
-        case 2: outs () << "unknown\n"; break;
+      case Result_t::SAT: outs () << "sat\n"; break;
+      case Result_t::UNSAT: outs () << "unsat\n"; break;
+      case Result_t::UNKNOWN: outs () << "unknown\n"; break;
       }
     }
   };
 
-  inline void solveNonlin(string smt, int inv, int stren)
+  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
-    if (inv == 0)
-      nonlin.guessAndSolve();
-    else
+    if (inv == 0) {      
+      if (maximal) {
+	nonlin.maximalSolve(relsOrder, smt);	
+      } else {
+	switch(nonlin.guessAndSolve()) {
+	case Result_t::UNSAT: nonlin.printCands(); break;
+	case Result_t::SAT: outs() << "sat!\n"; break;
+	case Result_t::UNKNOWN: outs() << "unknown\n"; break;
+	}
+      }
+	
+    } else {
       nonlin.solveIncrementally(inv);
+    }
   };
 }
 

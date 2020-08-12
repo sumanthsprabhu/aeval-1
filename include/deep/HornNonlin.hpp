@@ -335,6 +335,30 @@ namespace ufo
         incms[chcs[i].dstRelation].push_back(i);
     }
 
+    ExprVector getUnderConsRels()
+    {
+      ExprVector retRels;
+
+      for (auto d : decls) 
+	retRels.push_back(d->left());
+
+      for (auto rItr = retRels.begin(); rItr != retRels.end();) {
+	bool found = false;
+	for (auto & hr : chcs) {
+	  if (hr.dstRelation == *rItr && find(hr.srcRelations.begin(), hr.srcRelations.end(), *rItr) == hr.srcRelations.end()) {
+	    found = true;
+	    rItr = retRels.erase(rItr);
+	    break;
+	  }
+	}
+	if (found) continue;
+	++rItr;
+      }
+      
+      return retRels;
+      
+    }
+    
     void addFailDecl(Expr decl)
     {
       if (failDecl == NULL)
