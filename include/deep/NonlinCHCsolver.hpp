@@ -184,20 +184,19 @@ namespace ufo
     // subsumes bootstrapping (ssince facts and queries are considered)
     void propagate(bool fwd = true)
     {
-      // outs() << "Entry\n";//DEBUG
-      // printCands(false);//DEBUG
+      outs() << "Entry\n";//DEBUG
+      printCands(false);//DEBUG
       int szInit = declsVisited.size();
       for (auto & hr : ruleManager.chcs)
       {
-	//outs() << "hrd: " << *(hr.dstRelation) << "\n";//DEBUG
+	outs() << "hrd: " << *(hr.dstRelation) << "\n";//DEBUG
         bool dstVisited = declsVisited.find(hr.dstRelation) != declsVisited.end();
-	bool srcVisited = hr.isFact || (hr.isInductive && hasNoDef(hr.dstRelation));
-	//bool srcVisited = hr.isFact ;
-	// outs() << "sv: " << srcVisited << " fwd: " << fwd << " dv: " << dstVisited << "\n";//DEBUG
+	bool srcVisited = hr.isFact || (hr.isInductive && hasNoDef(hr.dstRelation) && extend.find(hr.dstRelation) == extend.end());
+	outs() << "sv: " << srcVisited << " fwd: " << fwd << " dv: " << dstVisited << "\n";//DEBUG
         for (auto & a : hr.srcRelations)
           srcVisited |= declsVisited.find(a) != declsVisited.end();
 
-	// outs() << "sv: " << srcVisited << " fwd: " << fwd << " dv: " << dstVisited << "\n";//DEBUG
+	outs() << "sv: " << srcVisited << " fwd: " << fwd << " dv: " << dstVisited << "\n";//DEBUG
         if (fwd && srcVisited && !dstVisited)
         {
           propagateCandidatesForward(hr);
@@ -208,7 +207,7 @@ namespace ufo
           propagateCandidatesBackward(hr);
           declsVisited.insert(hr.srcRelations.begin(), hr.srcRelations.end());
         }
-	// printCands(false);//DEBUG
+	printCands(false);//DEBUG
 
       }
 
@@ -391,16 +390,22 @@ namespace ufo
               if (numTrueCands > 0 && !trueCands[i]) continue;
 
               Expr r = rels[i];
-	      if (extend.find(r) != extend.end()) {
-		// outs () << "r: " << *r << "\n"; //DEBUG
-		// outs () << "cnj: " << *mk<AND>(extend[r], conjoin(curCnd, m_efac)) << "\n"; //DEBUG
-		if (!u.isSat(a, mk<AND>(extend[r], conjoin(curCnd, m_efac)))) {
-		  // outs () << "unsat!\n"; //DEBUG
-		  return;  // need to recheck because the solver has been reset
+	      Expr modelphi = conjoin(curCnd, m_efac);
+
+	      if (rels.size() == 1) {
+		if (extend.find(r) != extend.end()) {
+		  modelphi = mk<AND>(modelphi, replaceAll(extend[r], ruleManager.invVars[r], hr.srcVars[i]));
 		}
 	      } else {
-		if (!u.isSat(a, conjoin(curCnd, m_efac))) return;  // need to recheck because the solver has been reset
+		for (int j = i+1; j < rels.size(); j++) {
+		  if (extend.find(rels[j]) != extend.end()) {
+		    modelphi = mk<AND>(modelphi, replaceAll(extend[rels[j]], ruleManager.invVars[rels[j]], hr.srcVars[j]));
+		  }
+		}
 	      }
+
+	      if (!u.isSat(a, modelphi)) return; // need to recheck because the solver has been reset
+		
               if (processed.find(r) != processed.end()) continue;
 
               invVars.clear();
@@ -426,7 +431,14 @@ namespace ufo
               if (trueRels.size() != 1)                  // again, for fairness heuristic:
                 all.insert(u.getModel(allVarsExcept));
 
+	      // outs() << "truerels.size: " << trueRels.size() << "\n";//DEBUG
 	      // outs() << "model: " << *(u.getModel(allVarsExcept)) << "\n";//DEBUG
+	      //DEBUG
+	      // for (auto v : allVarsExcept)
+	      // 	outs() << "allvarsexcept: " << *v << "\n";
+	      // for (auto a : all)
+		// outs() << "all: " << *a << "\n";//DEBUG
+	      
               // in the case of nonlin, invVars is empty, so no renaming happens:
 
               preproGuessing(conjoin(all, m_efac), vars, invVars, backGuesses, true, false);
@@ -486,7 +498,8 @@ namespace ufo
                     for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
                       negModels.insert(mkNeg(replaceAll(conjoin(sol, m_efac), ruleManager.invVars[r], multiabdVars[*it2])));
 
-                    if (!u.isSat(mknary<FORALL>(args), sol.empty() ? mk<TRUE>(m_efac) : disjoin(negModels, m_efac)))
+                    if (!u.isSat(extend.find(r) != extend.end() ? mk<AND>(extend[r], mknary<FORALL>(args)) : mknary<FORALL>(args),
+				 sol.empty() ? mk<TRUE>(m_efac) : disjoin(negModels, m_efac)))
                     {
                       candidates[r].insert(sol.begin(), sol.end());
                       histRec.push_back(conjoin(sol, m_efac));
@@ -592,7 +605,11 @@ namespace ufo
           filterUnsat();
           if (!checkCHC(*hr, candidates))
           {
+	    // outs() << "in strengthen before\n";//DEBUG
+	    // printCands(false);//DEBUG
             propagateCandidatesBackward(*hr, deep == strenBound - 1);
+	    // outs() << "in strengthen after\n";//DEBUG
+	    // printCands(false);//DEBUG
             strengthen(deep+1);
           }
         }
@@ -1121,17 +1138,17 @@ namespace ufo
           }
           declsVisited.clear();
           declsVisited.insert(ruleManager.failDecl);
-	  // outs() << "1st\n";//DEBUG
-	  // printCands(false);//DEBUG
-	  // outs() << "fwd: " << fwd << "\n";//DEBUG
+	  outs() << "1st\n";//DEBUG
+	  printCands(false);//DEBUG
+	  outs() << "fwd: " << fwd << "\n";//DEBUG
 	  propagate(fwd);
           filterUnsat();
-	  // outs() << "2nd\n";//DEBUG
-	  // printCands(false);//DEBUG
+	  outs() << "2nd\n";//DEBUG
+	  printCands(false);//DEBUG
           if (fwd) multiHoudini(worklist);  // i.e., weaken
           else strengthen();
-	  // outs() << "3rd\n";//DEBUG
-	  // printCands(false);//DEBUG
+	  outs() << "3rd\n";//DEBUG
+	  printCands(false);//DEBUG
           if (checkAllOver(true)) return Result_t::UNSAT;
         }
         if (equalCands(candidatesTmp)) break;
@@ -1164,8 +1181,10 @@ namespace ufo
       return rels;      
     }
 
-    //ugly inefficient hack for time being; better way is to modify solveIncrementally and call it with a new rule
-    Result_t checkCex (const Expr & rel, const string & smt)
+    //prints additional rule candidates[rel] => rel to an smt file along with other rules
+    //runs solveIncrementally on the file with a new object and returns result
+    //can run z3 as well
+    Result_t checkCex(const Expr & rel, const string & smt)
     {
       stringstream newRule;
 
@@ -1189,7 +1208,7 @@ namespace ufo
       ifstream oldSmtFile(smt);
       ofstream newSmtFile(newSmt);
       string filestr;
-      //add above created new CHCs just before query command
+      //add above created new CHCs just before "query" command
       while (getline(oldSmtFile, filestr)) {
 	if (filestr.find("query") != string::npos)
 	  newSmtFile << newRule.str() << "\n";
@@ -1210,7 +1229,8 @@ namespace ufo
       return newNonlin.solveIncrementally(14, 0, query, empt);
     }
             
-    
+
+    //finds weakest interpretation for relations as per the order in relsOrderStr
     void maximalSolve (const vector<string> & relsOrderStr, const string & smt)
     {
       	ExprVector relsOrder = getRels(relsOrderStr);
@@ -1221,6 +1241,7 @@ namespace ufo
       map<Expr, ExprSet> prevSoln;      
 
       Result_t res = guessAndSolve();
+
       
       if (hasArrays) {
 	switch (res) {
@@ -1237,16 +1258,18 @@ namespace ufo
       }
 
       while (true) {
+
+	outs() << "currel: " << *relsOrder[curRel] << "\n"; //DEBUG
 	
 	if (res == Result_t::UNKNOWN) {
 
-	  // outs() << "res is unknown\n"; //DEBUG
+	  outs() << "res is unk\n"; //DEBUG
 	  assert(curRel < relsOrder.size());
 
 	  Result_t cexRes = checkCex(relsOrder[curRel], smt);
 
 	  if (cexRes == Result_t::SAT) {
-	    // outs() << "cex is sat\n"; //DEBUG
+	    outs() << "cex is st\n"; //DEBUG
 	    if (curRel == relsOrder.size() - 1) {
 	      printCands(true, prevSoln);
 	      return;	      
@@ -1260,17 +1283,17 @@ namespace ufo
 	  }
 	  
 	} else if (res == Result_t::UNSAT) {
-	  // outs() << "res is unsat\n"; //DEBUG
+	  outs() << "res is uns\n"; //DEBUG
 	  prevSoln.clear();
 	  for (auto e : candidates) {
 	    for (auto c : e.second) { 
 	      prevSoln[e.first].insert(c);
 	    }
 	  }
-	  // outs() << "rel: " << *(relsOrder[curRel]) << "\n"; //DEBUG
+	  outs() << "rel: " << *(relsOrder[curRel]) << "\n"; //DEBUG
 	  extend[relsOrder[curRel]] = mk<NEG>(conjoin(candidates[relsOrder[curRel]], m_efac));
-	  // outs() << "extend: " << *(extend[relsOrder[curRel]]) << "\n"; //DEBUG
-	  // printCands(false);//DEBUG
+	  outs() << "extend: " << *(extend[relsOrder[curRel]]) << "\n"; //DEBUG
+	  printCands(false);//DEBUG
 	  
 	} else {
 	  assert(0);
