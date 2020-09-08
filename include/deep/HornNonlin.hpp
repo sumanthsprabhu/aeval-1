@@ -354,6 +354,8 @@ namespace ufo
 	if (found) continue;
 	++rItr;
       }
+
+      reverse(retRels.begin(), retRels.end());
       
       return retRels;
       
