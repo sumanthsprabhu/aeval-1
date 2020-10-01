@@ -1257,6 +1257,103 @@ namespace ufo
       return newNonlin.solveIncrementally(14, 0, query, empt);
     }
 
+    Result_t checkZ3()
+    {
+      ExprVector ucRels = ruleManager.getUnderConsRels();
+      ExprVector asserts;
+      
+      for (auto hr : ruleManager.chcs) {
+	ExprVector existsArgs;
+	bool vacChkAdd = true;
+	
+	for (auto ucr : ucRels) {
+
+	  if (vacChkAdd && find(hr.srcRelations.begin(), hr.srcRelations.end(), ucr) != hr.srcRelations.end()) {
+
+	    vacChkAdd = false;
+	    
+	    for (int i = 0; i < hr.srcVars.size(); i++) {
+	      for (auto v : hr.srcVars[i])
+		existsArgs.push_back(v->left());
+	    }
+	    
+	    ExprVector matrix;
+	    for (int i = 0; i < hr.srcRelations.size(); i++) {
+	      Expr src = hr.srcRelations[i];
+	      for (auto d : ruleManager.decls)
+		if (lexical_cast<string>(*(d->left())) == lexical_cast<string>(*src))
+		  matrix.push_back(bind::fapp(d, hr.srcVars[i]));
+	    }
+	    
+	    if (!hr.isQuery) {
+	      matrix.push_back(hr.body);
+	    }
+
+	    existsArgs.push_back(conjoin(matrix, m_efac));
+	  }
+	}
+  
+	
+	if (existsArgs.size() > 0) {
+	  asserts.push_back(mknary<EXISTS>(existsArgs));
+	}
+
+	ExprVector forallArgs;
+	
+	for (int i = 0; i < hr.srcVars.size(); i++) {
+	  for (auto v : hr.srcVars[i])
+	    forallArgs.push_back(v->left());
+	}
+	
+	for (auto v : hr.dstVars)
+	  forallArgs.push_back(v->left());
+	
+
+	ExprVector antec;	
+
+	for (int i = 0; i < hr.srcRelations.size(); i++) {
+	  Expr src = hr.srcRelations[i];
+	  for (auto d : ruleManager.decls)
+	    if (lexical_cast<string>(*(d->left())) == lexical_cast<string>(*src))
+	      antec.push_back(bind::fapp(d, hr.srcVars[i]));
+	}
+
+	if (hr.isQuery) {
+	  forallArgs.push_back(mk<IMPL>(conjoin(antec, m_efac), mk<NEG>(hr.body)));
+	  
+	} else {
+	  antec.push_back(hr.body);
+	  
+	  for (auto d : ruleManager.decls)
+	    if (lexical_cast<string>(*(d->left())) == lexical_cast<string>(*(hr.dstRelation)))
+	      forallArgs.push_back(mk<IMPL>(conjoin(antec, m_efac), bind::fapp(d, hr.dstVars)));
+	}
+
+	asserts.push_back(mknary<FORALL>(forallArgs));		
+      }
+
+      //DEBUG
+      for (auto a : asserts) {
+      	u.print(a);
+      	outs() << "\n";
+      }
+      
+      boost::tribool res = u.isSat(asserts);
+
+      if (boost::logic::indeterminate(res)) {
+	return Result_t::UNKNOWN;
+	
+      } else if (!res) {
+	return Result_t::SAT;
+	
+      } else {
+	u.printModel();
+	return Result_t::UNSAT;
+      }
+      
+    }
+
+    
     Result_t checkMaximal(const Expr & rel, Expr & betterSoln)
     {
       ExprVector newVars;
@@ -1587,13 +1684,24 @@ namespace ufo
     }
   };
 
-  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder)
+  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool z3check)
   {
+    
     ExprFactory m_efac;
     EZ3 z3(m_efac);
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
+    
+    if (z3check) {
+      switch(nonlin.checkZ3()) {
+      case Result_t::UNSAT: outs() << "unsat\n"; break;
+      case Result_t::SAT: outs() << "sat!\n"; break;
+      case Result_t::UNKNOWN: outs() << "unknown\n"; break;
+      }
+      return;
+    }
+
     if (inv == 0) {      
       if (maximal) {
 	nonlin.maximalSolve(relsOrder, smt);	

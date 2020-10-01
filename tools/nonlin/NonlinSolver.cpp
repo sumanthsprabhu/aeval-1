@@ -55,8 +55,9 @@ int main (int argc, char ** argv)
         "Options:\n" <<
         "  --stren <NUM>                   number of strengthening iterations (by default, 1)          \n" <<
       "  --cex <NUM>                     search for counterexamples of given length                  \n" <<
-      "  --maximal                       get maximal specifications for under-constrained relations \n" <<
-      "  --rel-order <String List>       comma separated list of relations' order to be followed while finding maximal solution\n";
+      "  --maximal                       get maximal specifications for under-constrained relations \n" <<      
+      "  --rel-order <String List>       comma separated list of relations' order to be followed while finding maximal solution\n"
+      "  --z3check                       run just Z3 \n";
 
     return 0;
   }
@@ -64,10 +65,9 @@ int main (int argc, char ** argv)
   int str = getIntValue("--stren", 1, argc, argv);
   bool maximal = getBoolValue("--maximal", false, argc, argv);
   vector<string> relsOrder = getCommaSepStrValues("--rel-order", vector<string>(), argc, argv);
+  bool z3check = getBoolValue("--z3check", false, argc, argv);
 
-  for (auto & r : relsOrder)
-    outs() << "rel: " << r << "\n";
   
-  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder);
+  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, z3check);
   return 0;
 }

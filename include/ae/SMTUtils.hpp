@@ -25,6 +25,13 @@ namespace ufo
     smt (z3)
     {}
 
+    //debug
+    void printModel()
+    {
+      ZSolver<EZ3>::Model m = smt.getModel();
+      outs() << m << "\n";
+    }
+    
     Expr getModel(Expr v)
     {
       ExprVector eqs;
