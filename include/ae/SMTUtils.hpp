@@ -102,6 +102,49 @@ namespace ufo
       return isSat(cnjs, reset);
     }
 
+        template <typename T, typename Range, typename OutputItr> boost::tribool isSatAssuming(T& cnjs, const Range & lits, OutputItr unsatCore, bool reset=true, bool print = false)
+    {
+      allVars.clear();
+      if (reset) smt.reset();
+      for (auto & c : cnjs)
+      {
+        filter (c, bind::IsConst (), inserter (allVars, allVars.begin()));
+        if (isOpX<FORALL>(c))
+        {
+          ExprVector varz;
+          for (int i = 0; i < c->arity() - 1; i++)
+          {
+            varz.push_back(bind::fapp(c->arg(i)));
+          }
+          smt.assertForallExpr(varz, c->last());
+        }
+	else if(isOpX<IMPL>(c) &&
+		containsOp<FORALL>(c) && 
+		bind::isBoolConst(c->left())) {
+          ExprVector varz;
+	  varz.push_back(c->left());
+          for (int i = 0; i < c->right()->arity() - 1; i++)
+          {
+            varz.push_back(bind::fapp(c->right()->arg(i)));
+          }
+
+	  // outs() << *(c->left()) << "\n";
+	  // outs() << *(c->right()->last()) << "\n";
+	  
+          smt.assertForallExpr(varz, mk<IMPL>(c->left(), c->right()->last()));	  
+	}
+        else
+        {
+          if (containsOp<FORALL>(c)) return logic::indeterminate;
+	  if (print)
+	    outs() << *c << "\n";
+          smt.assertExpr(c);
+        }
+      }
+      boost::tribool res = smt.solveAssuming (lits, unsatCore);
+      return res;
+    }
+
     /**
      * SMT-based formula equivalence check
      */
@@ -433,7 +476,7 @@ namespace ufo
 //      smt.toSmtLib (outs());
 //      outs().flush ();
     }
-
+    
     template <typename Range> bool splitUnsatSets(Range & src, ExprVector & dst1, ExprVector & dst2)
     {
       if (isSat(src)) return false;
