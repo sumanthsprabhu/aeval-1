@@ -1314,6 +1314,13 @@ namespace ufo
       return rels;      
     }
 
+    void sanitizeForCHCDump(string & in)
+    {
+      in.erase(remove(in.begin(), in.end(), '_'), in.end());
+      in.erase(remove(in.begin(), in.end(), '|'), in.end());
+      std::replace(in.begin(), in.end(), '\'', '1');
+    }
+
     // Adds two new rules in addition to the rules present in 'oldsmt': 
     // 1) candidate[rel](invVars[rel]) => rel(invVars[rel])
     // 2) ~candidate[rel](invVars[rel]) /\ tmprel(invVars[rel]) => rel(invVars[rel])
@@ -1404,7 +1411,7 @@ namespace ufo
       newDecls << "(declare-rel " << queryRelStr << "())\n";
 
       if (addWeakRules) {
-	const string tmpRelName = "_tmp_";
+	const string tmpRelName = "tmprel";
       
 	newDecls << "(declare-rel " << tmpRelName << " (";
 	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
@@ -1448,14 +1455,11 @@ namespace ufo
       newsmt += "_" + to_string(std::chrono::system_clock::now().time_since_epoch().count());
       newsmt += ".smt2";
       
-      //hack: u.print() adds | and ' to the next state variables; replace it
       string ds = newDecls.str();
-      ds.erase(remove(ds.begin(), ds.end(), '|'), ds.end());
-      std::replace(ds.begin(), ds.end(), '\'', '1');
-
       string rs = newRules.str();
-      rs.erase(remove(rs.begin(), rs.end(), '|'), rs.end());
-      std::replace(rs.begin(), rs.end(), '\'', '1');
+      
+      sanitizeForCHCDump(ds);
+      sanitizeForCHCDump(rs);
 
       ofstream newsmtFile(newsmt);      
       newsmtFile << ds << "\n" << rs << "\n";
@@ -1619,6 +1623,13 @@ namespace ufo
     {
       string newsmt = constructMaximalRules(rel, ruleManager.infile, firstCall);
 
+      Result_t cexRes = checkCex(rel, newsmt);
+
+      if (cexRes == Result_t::SAT) {
+	outs() << "CHC proved us\n";
+	return Result_t::UNSAT;
+      }
+           
       map<Expr, ExprSet> soln;
       ExprVector rels;
 
@@ -1639,15 +1650,8 @@ namespace ufo
 	    candidates[e.first].insert(e.second.begin(), e.second.end());
 	  }
 	}	
-	return Result_t::SAT;
       }
-
-      switch(checkCex(rel, newsmt)) {
-      case Result_t::SAT: outs() << "CHC proved us\n"; return Result_t::UNSAT; break;
-	//TODO: handle unsat case
-      default : return Result_t::UNKNOWN;
-      }
-	
+      return res;
     }
 
     
@@ -1877,23 +1881,22 @@ namespace ufo
 	  return;
 	}
 
-	//no under-constrained relations, so no need to weaken
-	if (res == Result_t::UNSAT && relsOrder.size() == 0) {
-	  printCands();
+	switch(res) {
+	case Result_t::UNSAT:
+	  if (relsOrder.size() == 0) {
+	    printCands();
+	    return;
+	  }
+	  firstCall = false;
+	  break;
+	case Result_t::SAT:
+	  outs() << "sat\n";
 	  return;
-	} else if (res == Result_t::UNKNOWN) {
+	case Result_t::UNKNOWN:
 	  candidates.clear();
 	  firstCall = true;
 	}
-	
-	// if (res != Result_t::UNSAT) {
-	//   assert(res != Result_t::SAT);
-	//   outs() << "unknown\n";
-	//   return;
-	// }
-
-	// firstSMT = false;
-		
+		  			
       }       
       
       outs() << "currel: " << *relsOrder[curRel] << "\n"; //DEBUG
