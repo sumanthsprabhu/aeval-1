@@ -1314,11 +1314,73 @@ namespace ufo
       return rels;      
     }
 
-    void sanitizeForCHCDump(string & in)
+    void sanitizeForDump(string & in)
     {
       in.erase(remove(in.begin(), in.end(), '_'), in.end());
       in.erase(remove(in.begin(), in.end(), '|'), in.end());
-      std::replace(in.begin(), in.end(), '\'', '1');
+
+      map<char,char> substmap;
+      // substmap['_'] = 'U';
+      // substmap['|'] = 'B';
+      substmap['\''] = 'P';
+      substmap['$'] = 'D';
+      substmap[':'] = 'C';
+      substmap[';'] = 'c';
+      
+      for (size_t i = 0; i < in.size(); i++) {
+	auto subst = substmap.find(in[i]);
+	if (subst != substmap.end()) {
+	  in[i] = subst->second;
+	}
+      }      
+      // std::replace(in.begin(), in.end(), '\'', 'p');
+      // std::replace(in.begin(), in.end(), '$', 'D');
+      // std::replace(in.begin(), in.end(), ':', 'C');
+    }
+
+    void printAllVarsRels(const ExprSet & allVars, stringstream & decls)
+    {
+      for (auto v : allVars) {
+	decls << "(declare-var " << *v << " " << u.varType(v) << ")\n";
+      }
+
+      for (auto d : ruleManager.decls) {
+	decls << "(declare-rel " << *bind::fname(d) << " (";
+        for (unsigned i = 0; i < bind::domainSz(d); i++)
+        {
+          Expr ty = bind::domainTy(d, i);
+          if (isOpX<BOOL_TY>(ty)) decls << "Bool ";
+          else if (isOpX<REAL_TY>(ty)) decls << "Real ";
+          else if (isOpX<INT_TY>(ty)) decls << "Int ";
+	  else decls << "UnSupportedSort";
+	}
+	decls << ")) \n";	
+      }
+    }
+
+
+    string dumpToFile(stringstream & decls, stringstream & rules, string oldsmt = "", string postfix = "")
+    {
+      if (oldsmt.size() == 0) {
+	oldsmt = ruleManager.infile;
+      }
+      
+      string newsmt = oldsmt.substr(oldsmt.find_last_of("/"));
+      newsmt = "/tmp/" + newsmt.substr(0, newsmt.find_last_of("."));
+      newsmt += postfix + "_" + to_string(std::chrono::system_clock::now().time_since_epoch().count());
+      newsmt += ".smt2";
+      
+      string ds = decls.str();
+      string rs = rules.str();
+      
+      sanitizeForDump(ds);
+      sanitizeForDump(rs);
+
+      ofstream newsmtFile(newsmt);      
+      newsmtFile << ds << "\n" << rs << "\n";
+      newsmtFile.close();
+
+      return newsmt;
     }
 
     // Adds two new rules in addition to the rules present in 'oldsmt': 
@@ -1391,23 +1453,8 @@ namespace ufo
 	outs() << newRules.str();
       }
 
-      for (auto v : allVars) {
-	newDecls << "(declare-var " << *v << " " << u.varType(v) << ")\n";
-      }
-
-      for (auto d : ruleManager.decls) {
-	newDecls << "(declare-rel " << *bind::fname(d) << " (";
-        for (unsigned i = 0; i < bind::domainSz(d); i++)
-        {
-          Expr ty = bind::domainTy(d, i);
-          if (isOpX<BOOL_TY>(ty)) newDecls << "Bool ";
-          else if (isOpX<REAL_TY>(ty)) newDecls << "Real ";
-          else if (isOpX<INT_TY>(ty)) newDecls << "Int ";
-	  else newDecls << "UnSupportedSort";
-	}
-	newDecls << ")) \n";	
-      }
-
+      printAllVarsRels(allVars, newDecls);
+      
       newDecls << "(declare-rel " << queryRelStr << "())\n";
 
       if (addWeakRules) {
@@ -1450,20 +1497,7 @@ namespace ufo
       
       newRules << "(query " << queryRelStr << ")\n";
 
-      string newsmt = oldsmt.substr(oldsmt.find_last_of("/"));
-      newsmt = "/tmp/" + newsmt.substr(0, newsmt.find_last_of("."));
-      newsmt += "_" + to_string(std::chrono::system_clock::now().time_since_epoch().count());
-      newsmt += ".smt2";
-      
-      string ds = newDecls.str();
-      string rs = newRules.str();
-      
-      sanitizeForCHCDump(ds);
-      sanitizeForCHCDump(rs);
-
-      ofstream newsmtFile(newsmt);      
-      newsmtFile << ds << "\n" << rs << "\n";
-      newsmtFile.close();
+      string newsmt = dumpToFile(newDecls, newRules, oldsmt);
       
       return newsmt;
     }
@@ -1623,19 +1657,23 @@ namespace ufo
     {
       string newsmt = constructMaximalRules(rel, ruleManager.infile, firstCall);
 
-      Result_t cexRes = checkCex(rel, newsmt);
-
-      if (cexRes == Result_t::SAT) {
-	outs() << "CHC proved us\n";
+      if (!firstCall && u.isTrue(conjoin(candidates[rel], m_efac))) {
 	return Result_t::UNSAT;
       }
+
+      // Result_t cexRes = checkCex(rel, newsmt);
+
+      // if (cexRes == Result_t::SAT) {
+      // 	outs() << "CHC proved us\n";
+      // 	return Result_t::UNSAT;
+      // }
            
       map<Expr, ExprSet> soln;
       ExprVector rels;
 
-      for (auto e : candidates) {
-	if (!isFixedRel(e.first)) {
-	  rels.push_back(e.first);
+      for (auto d : ruleManager.decls) {
+	if (!isFixedRel(d->left())) {
+	  rels.push_back(d->left());
 	}
       }
       
@@ -1654,7 +1692,25 @@ namespace ufo
       return res;
     }
 
-    
+
+    void dumpSMT(const ExprVector & constraints, const ExprSet & allVars)
+    {
+      stringstream asserts;
+      stringstream decls;
+
+      printAllVarsRels(allVars, decls);
+
+      for (auto c : constraints) {
+	asserts << "(assert ";
+	u.print(c, asserts);
+	asserts << ")\n";
+      }
+
+      asserts << "(check-sat)\n(get-model)\n";
+
+      dumpToFile(decls, asserts, ruleManager.infile, "_smt_");
+      
+    }
 
     // smt solver based weaker solution synthesis
     Result_t checkMaximalSMT(const Expr & rel, Expr & betterSoln, bool firstTime, bool update=true)
@@ -1701,6 +1757,7 @@ namespace ufo
       } 
 
       ExprVector funcs;
+      ExprSet allVars(newVars.begin(), newVars.end());
 
       //add original CHCs as constraints (substitute current relation and fixed relations by their interpretations)
       //also add vacuity check (i.e. exists srcvars. antecedent(chc))
@@ -1713,12 +1770,16 @@ namespace ufo
 	  for (auto v : hr.srcVars[i]) {
 	    rargs.push_back(v->left());
 	    vacuityArgs.push_back(v->left());
+	    allVars.insert(v);
 	  }
 
 	for (auto v : hr.dstVars) {
 	  rargs.push_back(v->left());
 	  vacuityArgs.push_back(v->left());
+	  allVars.insert(v);
 	}
+
+	allVars.insert(hr.locVars.begin(), hr.locVars.end());
 	
 
 	ExprSet cnjs;
@@ -1771,20 +1832,22 @@ namespace ufo
 	}
 
 	//Replace dstvars in terms of srcvars; an optimisation which makes z3 solve faster sometime
-	ExprSet dummyVars;
-	AeValSolver ae(mk<TRUE>(m_efac), mk<TRUE>(m_efac), dummyVars); 
-	for(auto dv : hr.dstVars) {
-	  outs() << "hr.body: " << *(hr.body) << "\n";
-	  outs() << "dv: " << *(dv) << "\n";
+	// ExprSet dummyVars;
+	// AeValSolver ae(mk<TRUE>(m_efac), mk<TRUE>(m_efac), dummyVars); 
+	// for(auto dv : hr.dstVars) {
+	//   outs() << "hr.body: " << *(hr.body) << "\n";
+	//   outs() << "dv: " << *(dv) << "\n";
 
-	  Expr e = ineqSimplifier(dv, hr.body, true);
+	//   Expr e = ineqSimplifier(dv, hr.body, true);
 
-	  outs() << "e: " << *e << "\n";
+	//   outs() << "e: " << *e << "\n";
 	  
-	  Expr repExpr = ae.getAssignmentForVar(dv, e);
+	//   Expr repExpr = ae.getAssignmentForVar(dv, e);
+
+	//   if (isOpX<TRUE>(repExpr)) continue;
 	  
-	  conseq = replaceAll(conseq, dv, repExpr);
-	}
+	//   conseq = replaceAll(conseq, dv, repExpr);
+	// }
 
 	rargs.push_back(mk<IMPL>(antec, conseq));
 
@@ -1798,10 +1861,7 @@ namespace ufo
       }
 
       //DEBUG
-      for (auto c : constraints) {
-      	u.serialize_formula(c);
-      	outs() << "\n";
-      }
+      dumpSMT(constraints, allVars);
       
       boost::tribool res = u.isSat(constraints);
 
