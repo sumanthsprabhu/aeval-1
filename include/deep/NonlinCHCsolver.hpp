@@ -1501,6 +1501,144 @@ namespace ufo
       
       return newsmt;
     }
+
+
+    string constructMaximalRulesV2(const Expr & rel, const string & oldsmt)
+    {
+      assert(candidates[rel].size() != 0);
+
+      Expr curcand = conjoin(candidates[rel], m_efac);
+      stringstream newRules;
+      stringstream newDecls;
+      ExprSet allVars;
+      string queryRelStr = isOpX<FALSE>(ruleManager.failDecl) ? "fail" : lexical_cast<string>(ruleManager.failDecl);
+
+      Expr reld;
+      
+      for (auto d : ruleManager.decls) {
+	if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*rel)) {
+	  reld = d;
+	  break;
+	}
+      }    
+
+      
+      for (auto & hr : ruleManager.chcs)
+      {
+	for (int i = 0; i < hr.srcVars.size(); i++) {
+	  allVars.insert(hr.srcVars[i].begin(), hr.srcVars[i].end());
+	}
+	allVars.insert(hr.locVars.begin(), hr.locVars.end());
+	allVars.insert(hr.dstVars.begin(), hr.dstVars.end());
+	
+
+	ExprVector<ExprSet> antecs;
+	ExprVector<ExprVector> clauses;
+	
+	for (int i = 0; i < hr.srcRelations.size(); i++) {
+	  Expr src = hr.srcRelations[i];
+	  ExprVector clause;
+	  if (rel == src) {
+	    clause.push_back(replaceAll(curcand, ruleManager.invVars[src], hr.srcVars[i]));
+	    clause.push_back(bind::fapp(reld, hr.srcVars[i]));
+	    
+	  } else if (isFixedRel(src)){
+	    Expr t = replaceAll(conjoin(candidates[src], m_efac), ruleManager.invVars[src], hr.srcVars[i]);
+	    clause.push_back(t);
+	    
+	  } else {
+	    for (auto d : ruleManager.decls) {
+	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*src)) {
+		Expr t = bind::fapp(d, hr.srcVars[i]);
+		clause.push_back(t);
+		break;
+	      }
+	    }
+	    
+	  }
+	}
+
+	antec.insert(hr.body);
+	Expr conseq;
+	bool addFail = false;
+	
+	if (isFixedRel(hr.dstRelation)) {
+	  antec.insert(mk<NEG>(replaceAll(conjoin(candidates[hr.dstRelation], m_efac), ruleManager.invVars[hr.dstRelation], hr.dstVars)));
+	  addFail = true;
+	} else {
+	  if (hr.isQuery) {
+	    addFail = true;
+	  } else {
+	    for (auto d : ruleManager.decls)
+	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.dstRelation))) {
+		conseq = bind::fapp(d, hr.dstVars);
+		break;
+	      }	    
+	  }
+	}
+	
+	if (addFail) {
+	  newRules << "(rule (=> ";
+	  u.print(conjoin(antec, m_efac), newRules);
+	  newRules << " " << queryRelStr << "))\n";
+	} else {
+	  newRules << "(rule ";
+	  u.print(mk<IMPL>(conjoin(antec, m_efac), conseq), newRules);
+	  newRules << ")\n";
+	}
+	//debug
+	outs() << newRules.str();
+      }
+
+      printAllVarsRels(allVars, newDecls);
+      
+      newDecls << "(declare-rel " << queryRelStr << "())\n";
+
+      if (addWeakRules) {
+	const string tmpRelName = "tmprel";
+      
+	newDecls << "(declare-rel " << tmpRelName << " (";
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  newDecls << " " << u.varType(*itr);
+	}
+	newDecls << "))\n";	
+      
+	//candidate[rel] => rel
+	newRules << "(rule (=> ";
+	u.print(conjoin(candidates[rel], m_efac), newRules);
+	newRules << "( " << *rel;
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  if (itr != ruleManager.invVars[rel].begin())
+	    newRules << " ";
+	  newRules << " " << *itr;
+	}
+	newRules << ")))\n";
+
+	//~candidate[rel] /\ tmprel => rel
+	newRules << "(rule (=> (and ";
+	u.print(mk<NEG>(conjoin(candidates[rel], m_efac)), newRules);
+	newRules << "( " << tmpRelName;
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  if (itr != ruleManager.invVars[rel].begin())
+	    newRules << " ";
+	  newRules << " " << *itr;
+	}
+	newRules << ")) ( " << *rel;
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  if (itr != ruleManager.invVars[rel].begin())
+	    newRules << " ";
+	  newRules << " " << *itr;
+	}
+	newRules << ")))\n";
+      }
+      
+      newRules << "(query " << queryRelStr << ")\n";
+
+      string newsmt = dumpToFile(newDecls, newRules, oldsmt);
+      
+      return newsmt;
+    }
+
     
     //runs solveIncrementally on the file with a new object and returns the result of it
     Result_t checkCex(const Expr & rel, const string & newsmt)
@@ -1651,15 +1789,24 @@ namespace ufo
       
       return Result_t::UNKNOWN;      
     }
+
+
     
     // chc solver based weaker solution synthesis
-    Result_t checkMaximalCHC(const Expr & rel, Expr & betterSoln, bool firstCall, bool update=true)
+    Result_t checkMaximalCHC(const Expr & rel, Expr & betterSoln, bool firstCall, int version = 1, bool update=true)
     {
-      string newsmt = constructMaximalRules(rel, ruleManager.infile, firstCall);
-
       if (!firstCall && u.isTrue(conjoin(candidates[rel], m_efac))) {
 	return Result_t::UNSAT;
       }
+
+      
+      string newsmt;
+      if (firstCall || version != 2) {
+	constructMaximalRules(rel, ruleManager.infile, firstCall);
+      } else {
+	constructMaximalRulesV2(rel, ruleManager.infile, firstCall);
+      }
+
 
       // Result_t cexRes = checkCex(rel, newsmt);
 
@@ -1712,6 +1859,11 @@ namespace ufo
       
     }
 
+    Result_t checkMaximalSMTV2(const Expr & rel, Expr & betterSoln, bool firstTime, bool update=true)
+    {
+      
+    }
+    
     // smt solver based weaker solution synthesis
     Result_t checkMaximalSMT(const Expr & rel, Expr & betterSoln, bool firstTime, bool update=true)
     {
