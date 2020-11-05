@@ -31,7 +31,7 @@ namespace ufo
   }
 
   enum class Result_t {SAT=0, UNSAT, UNKNOWN};
-
+  
   class NonlinCHCsolver
   {
     private:
@@ -1345,6 +1345,7 @@ namespace ufo
       }
 
       for (auto d : ruleManager.decls) {
+	if (d == ruleManager.failDecl) continue;
 	decls << "(declare-rel " << *bind::fname(d) << " (";
         for (unsigned i = 0; i < bind::domainSz(d); i++)
         {
@@ -1503,6 +1504,29 @@ namespace ufo
     }
 
 
+    void getOrCombinations(const vector<ExprVector> & clauses, int curRL, int curBT, ExprVector & curOutput, vector<ExprSet> & output)
+    {
+      if (curRL == clauses.size()) {
+	output.push_back(ExprSet());
+	ExprSet& cjs = output.back();
+	for (auto co : curOutput) 
+	  cjs.insert(co);
+	curOutput.pop_back();
+	return;
+      }
+      
+      if (curBT == clauses[curRL].size()) {
+	if (curOutput.size() > 0)
+	  curOutput.pop_back();
+	return;
+      }
+      
+      curOutput.push_back(clauses[curRL][curBT]);
+      
+      getOrCombinations(clauses, curRL+1, 0, curOutput, output);
+      getOrCombinations(clauses, curRL, curBT+1, curOutput, output);
+    }
+    
     string constructMaximalRulesV2(const Expr & rel, const string & oldsmt)
     {
       assert(candidates[rel].size() != 0);
@@ -1532,9 +1556,7 @@ namespace ufo
 	allVars.insert(hr.dstVars.begin(), hr.dstVars.end());
 	
 
-	ExprVector<ExprSet> antecs;
-	ExprVector<ExprVector> clauses;
-	
+	vector<ExprVector> clauses;	
 	for (int i = 0; i < hr.srcRelations.size(); i++) {
 	  Expr src = hr.srcRelations[i];
 	  ExprVector clause;
@@ -1554,38 +1576,61 @@ namespace ufo
 		break;
 	      }
 	    }
-	    
+	  }
+	  clauses.push_back(clause);
+	}
+	clauses.push_back(ExprVector{hr.body});
+
+	if (hr.dstRelation == rel) {
+	  clauses.push_back(ExprVector{mk<NEG>(replaceAll(curcand, ruleManager.invVars[rel], hr.dstVars))});
+	}
+	
+	vector<ExprSet> antecs;
+	ExprVector tmpOutput;
+	getOrCombinations(clauses, 0, 0, tmpOutput, antecs);
+
+	for (auto antecItr = antecs.begin(); antecItr != antecs.end();)
+	{
+	  if (!u.isSat(*antecItr)) {
+	    antecItr = antecs.erase(antecItr);
+	  } else {
+	    antecItr++;
 	  }
 	}
-
-	antec.insert(hr.body);
+	  
 	Expr conseq;
 	bool addFail = false;
-	
+
+
 	if (isFixedRel(hr.dstRelation)) {
-	  antec.insert(mk<NEG>(replaceAll(conjoin(candidates[hr.dstRelation], m_efac), ruleManager.invVars[hr.dstRelation], hr.dstVars)));
+	  conseq = mk<NEG>(replaceAll(conjoin(candidates[hr.dstRelation], m_efac), ruleManager.invVars[hr.dstRelation], hr.dstVars));
 	  addFail = true;
-	} else {
+	} else {	  
 	  if (hr.isQuery) {
 	    addFail = true;
+	    conseq = mk<TRUE>(m_efac);
 	  } else {
-	    for (auto d : ruleManager.decls)
+	    for (auto d : ruleManager.decls) {
 	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.dstRelation))) {
 		conseq = bind::fapp(d, hr.dstVars);
 		break;
-	      }	    
+	      }
+	    }
 	  }
 	}
-	
-	if (addFail) {
-	  newRules << "(rule (=> ";
-	  u.print(conjoin(antec, m_efac), newRules);
-	  newRules << " " << queryRelStr << "))\n";
-	} else {
-	  newRules << "(rule ";
-	  u.print(mk<IMPL>(conjoin(antec, m_efac), conseq), newRules);
-	  newRules << ")\n";
+
+	for (auto antec : antecs) {
+	  if (addFail) {
+	    newRules << "(rule (=> ";
+	    u.print(mk<AND>(conjoin(antec, m_efac), conseq), newRules);
+	    newRules << " " << queryRelStr << "))\n";	    
+	  } else {
+	    newRules << "(rule ";
+	    u.print(mk<IMPL>(conjoin(antec, m_efac), conseq), newRules);
+	    newRules << ")\n";	    
+	  }
 	}
+
 	//debug
 	outs() << newRules.str();
       }
@@ -1594,49 +1639,17 @@ namespace ufo
       
       newDecls << "(declare-rel " << queryRelStr << "())\n";
 
-      if (addWeakRules) {
-	const string tmpRelName = "tmprel";
+      Expr relApp = bind::fapp(reld, ruleManager.invVars[rel]);
       
-	newDecls << "(declare-rel " << tmpRelName << " (";
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  newDecls << " " << u.varType(*itr);
-	}
-	newDecls << "))\n";	
-      
-	//candidate[rel] => rel
-	newRules << "(rule (=> ";
-	u.print(conjoin(candidates[rel], m_efac), newRules);
-	newRules << "( " << *rel;
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  if (itr != ruleManager.invVars[rel].begin())
-	    newRules << " ";
-	  newRules << " " << *itr;
-	}
-	newRules << ")))\n";
-
-	//~candidate[rel] /\ tmprel => rel
-	newRules << "(rule (=> (and ";
-	u.print(mk<NEG>(conjoin(candidates[rel], m_efac)), newRules);
-	newRules << "( " << tmpRelName;
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  if (itr != ruleManager.invVars[rel].begin())
-	    newRules << " ";
-	  newRules << " " << *itr;
-	}
-	newRules << ")) ( " << *rel;
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  if (itr != ruleManager.invVars[rel].begin())
-	    newRules << " ";
-	  newRules << " " << *itr;
-	}
-	newRules << ")))\n";
-      }
-      
+      newRules << "(rule (=> ";
+      u.print(mk<AND>(relApp, curcand), newRules);
+      newRules << " " << queryRelStr << "))\n";	    
+            
       newRules << "(query " << queryRelStr << ")\n";
 
-      string newsmt = dumpToFile(newDecls, newRules, oldsmt);
+      string newchc = dumpToFile(newDecls, newRules, oldsmt);
       
-      return newsmt;
+      return newchc;
     }
 
     
@@ -1793,7 +1806,7 @@ namespace ufo
 
     
     // chc solver based weaker solution synthesis
-    Result_t checkMaximalCHC(const Expr & rel, Expr & betterSoln, bool firstCall, int version = 1, bool update=true)
+    Result_t checkMaximalCHC(const Expr & rel, Expr & betterSoln, bool firstCall, bool newenc = false, bool update=true)
     {
       if (!firstCall && u.isTrue(conjoin(candidates[rel], m_efac))) {
 	return Result_t::UNSAT;
@@ -1801,13 +1814,15 @@ namespace ufo
 
       
       string newsmt;
-      if (firstCall || version != 2) {
-	constructMaximalRules(rel, ruleManager.infile, firstCall);
+      
+      if (firstCall || !newenc) {
+      	newsmt = constructMaximalRules(rel, ruleManager.infile, firstCall);
       } else {
-	constructMaximalRulesV2(rel, ruleManager.infile, firstCall);
+      	newsmt = constructMaximalRulesV2(rel, ruleManager.infile);
       }
 
 
+      //solveIncrementally() isn't working :(
       // Result_t cexRes = checkCex(rel, newsmt);
 
       // if (cexRes == Result_t::SAT) {
@@ -1831,8 +1846,15 @@ namespace ufo
 	betterSoln = conjoin(soln[rel], m_efac);
 	if (update) {
 	  for (auto e : soln) {
-	    candidates[e.first].clear();
-	    candidates[e.first].insert(e.second.begin(), e.second.end());
+	    if (e.first == rel && !firstCall && newenc) {
+	      Expr cur = conjoin(candidates[e.first], m_efac);
+	      Expr nu = conjoin(e.second, m_efac);
+	      candidates[e.first].clear();
+	      candidates[e.first].insert(mk<OR>(cur, nu));
+	    } else {
+	      candidates[e.first].clear();
+	      candidates[e.first].insert(e.second.begin(), e.second.end());
+	    }
 	  }
 	}	
       }
@@ -1840,7 +1862,7 @@ namespace ufo
     }
 
 
-    void dumpSMT(const ExprVector & constraints, const ExprSet & allVars)
+    void dumpSMT(const ExprVector & constraints, const ExprSet & allVars, const bool newenc = false)
     {
       stringstream asserts;
       stringstream decls;
@@ -1855,13 +1877,185 @@ namespace ufo
 
       asserts << "(check-sat)\n(get-model)\n";
 
-      dumpToFile(decls, asserts, ruleManager.infile, "_smt_");
+      dumpToFile(decls, asserts, ruleManager.infile, newenc ? "_smt_" : "_smt_V2_");
       
     }
 
-    Result_t checkMaximalSMTV2(const Expr & rel, Expr & betterSoln, bool firstTime, bool update=true)
+    Result_t checkMaximalSMTV2(const Expr & rel, bool update = true)
     {
+      Expr reld;
+      for (auto d : ruleManager.decls) {
+	if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*rel)) {
+	  reld = d;
+	  break;
+	}
+      }    
+      Expr curcand = conjoin(candidates[rel], m_efac);
+      ExprVector constraints;
+
+      //new constraints
+      {
+	ExprVector args;
+	for (auto v : ruleManager.invVars[rel])
+	  args.push_back(v->left());
+	args.push_back(mk<IMPL>(mk<AND>(bind::fapp(reld, ruleManager.invVars[rel]), mk<NEG>(curcand)), mk<FALSE>(m_efac)));
+	constraints.push_back(mknary<FORALL>(args));
+	args.pop_back();
+	
+	args.push_back(bind::fapp(reld, ruleManager.invVars[rel]));
+	constraints.push_back(mknary<EXISTS>(args));
+      }
+
+      ExprSet allVars;
+      map<Expr, ExprVector> funcs;
+
+      for (auto & hr : ruleManager.chcs)
+      {
+	ExprVector args;
+	
+	for (int i = 0; i < hr.srcRelations.size(); i++)
+	  for (auto v : hr.srcVars[i]) {
+	    args.push_back(v->left());
+	    allVars.insert(v);
+	  }
+
+	for (auto v : hr.dstVars) {
+	  args.push_back(v->left());
+	  allVars.insert(v);
+	}
+	
+	for (auto l : hr.locVars) {
+	  args.push_back(l->left());
+	  allVars.insert(l);
+	}
+
+	vector<ExprVector> clauses;	
+	for (int i = 0; i < hr.srcRelations.size(); i++) {
+	  Expr src = hr.srcRelations[i];
+	  ExprVector clause;
+	  if (rel == src) {
+	    clause.push_back(replaceAll(curcand, ruleManager.invVars[src], hr.srcVars[i]));
+	    Expr f = bind::fapp(reld, hr.srcVars[i]);
+	    funcs.insert({f, hr.srcVars[i]});
+	    clause.push_back(f);	    
+	  } else if (isFixedRel(src)){
+	    Expr t = replaceAll(conjoin(candidates[src], m_efac), ruleManager.invVars[src], hr.srcVars[i]);
+	    clause.push_back(t);
+	    
+	  } else {
+	    for (auto d : ruleManager.decls) {
+	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*src)) {
+		Expr f = bind::fapp(d, hr.srcVars[i]);
+		funcs.insert({f, hr.srcVars[i]});
+		clause.push_back(f);
+		break;
+	      }
+	    }
+	  }
+	  clauses.push_back(clause);
+	}
+	
+	if (!hr.isQuery)
+	  clauses.push_back(ExprVector{hr.body});
+
+	if (hr.dstRelation == rel) 
+	  clauses.push_back(ExprVector{mk<NEG>(replaceAll(curcand, ruleManager.invVars[rel], hr.dstVars))});
+	
+	
+	vector<ExprSet> antecs;
+	ExprVector tmpOutput;
+	getOrCombinations(clauses, 0, 0, tmpOutput, antecs);
+
+	for (auto antecItr = antecs.begin(); antecItr != antecs.end();)
+	{
+	  if (!u.isSat(*antecItr)) {
+	    antecItr = antecs.erase(antecItr);
+	  } else {
+	    antecItr++;
+	  }
+	}
+	  
+	Expr conseq;
+	bool addFail = false;
+
+	if (isFixedRel(hr.dstRelation)) {
+	  addFail = true;
+	  conseq = mk<NEG>(replaceAll(conjoin(candidates[hr.dstRelation], m_efac), ruleManager.invVars[hr.dstRelation], hr.dstVars));
+	} else {	  
+	  if (hr.isQuery) {
+	    addFail = true;
+	    conseq = hr.body;
+	  } else {
+	    for (auto d : ruleManager.decls) {
+	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.dstRelation))) {
+		conseq = bind::fapp(d, hr.dstVars);
+		break;
+	      }
+	    }
+	  }
+	}
+
+	for (auto antec : antecs) {
+	  //vacuity
+	  if (hr.srcRelations.size() != 0) {
+	    args.push_back(conjoin(antec, m_efac));
+	    constraints.push_back(mknary<EXISTS>(args));
+	    args.pop_back();
+	  }
+
+	  //CHC
+	  if (addFail) {
+	    args.push_back(mk<IMPL>(mk<AND>(conjoin(antec, m_efac), conseq), mk<FALSE>(m_efac)));
+	  } else {
+	    args.push_back(mk<IMPL>(conjoin(antec, m_efac), conseq));
+	  }
+	  constraints.push_back(mknary<FORALL>(args));
+	  args.pop_back();
+	  
+	}
+      }
       
+      dumpSMT(constraints, allVars, 2);
+      
+      boost::tribool res = u.isSat(constraints);
+
+      if (boost::logic::indeterminate(res)) {
+	//	outs() << "result is indeterminate \n";//DEBUG
+	return Result_t::UNKNOWN;
+	
+      } else if (!res) {
+	//	outs() << "result is us!\n";//DEBUG
+	return Result_t::UNSAT;
+      }
+
+      u.printModel();//debug
+      if (!update) {
+	return Result_t::SAT;
+      }
+	 
+
+      for (auto func : funcs) {
+	Expr fm = u.getModel(func.first);
+	outs() << *(func.first) << " -> " << *fm << "\n";
+      }
+
+      for (auto d : ruleManager.decls) {
+	//NOTE: assumption here is that funcs will have only nonfixed rels
+	for (auto func : funcs) {
+	  if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*((func.first)->left()->left()))) {
+	    if (d->left() == rel) {
+	      Expr cur = conjoin(candidates[d->left()], m_efac);
+	      Expr nu = replaceAll(u.getModel(func.first), func.second, ruleManager.invVars[d->left()]);
+	      candidates[d->left()].clear();
+	      candidates[d->left()].insert(mk<OR>(cur, nu));		
+	    } else {
+	      candidates[d->left()].clear();
+	      candidates[d->left()].insert(replaceAll(u.getModel(func.first), func.second, ruleManager.invVars[d->left()]));
+	    }
+	    break;
+	  }
+	}
+      }      
     }
     
     // smt solver based weaker solution synthesis
@@ -1870,6 +2064,16 @@ namespace ufo
       
       if (!firstTime && isOpX<TRUE>(conjoin(candidates[rel], m_efac)))
 	return Result_t::UNSAT;
+
+      //debug
+      // if (!firstTime) {
+      // 	outs() << "\n\nV2 result: ";
+      // 	switch(checkMaximalSMTV2(rel, false)) {
+      // 	case Result_t::SAT : outs() << "SAT\n"; break;
+      // 	case Result_t::UNSAT : outs() << "UNSAT\n"; break;
+      // 	case Result_t::UNKNOWN : outs() << "UNKNOWN\n"; break;
+      // 	}
+      // }
       
       ExprVector newVars;
       Expr curCand;
@@ -1908,7 +2112,7 @@ namespace ufo
 	constraints.push_back(mknary<EXISTS>(args));	
       } 
 
-      ExprVector funcs;
+      map<Expr, ExprVector> funcs;
       ExprSet allVars(newVars.begin(), newVars.end());
 
       //add original CHCs as constraints (substitute current relation and fixed relations by their interpretations)
@@ -1949,7 +2153,7 @@ namespace ufo
 	    for (auto d : ruleManager.decls)
 	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*src)) {
 		Expr t = bind::fapp(d, hr.srcVars[i]);
-		funcs.push_back(t);
+		funcs.insert({t, hr.srcVars[i]});
 		cnjs.insert(t);
 		break;
 	      }
@@ -2029,9 +2233,9 @@ namespace ufo
 
       //debug
       u.printModel();
-      for (auto f : funcs) {
-	Expr fm = u.getModel(f);
-	outs() << *f << " -> " << *fm << "\n";
+      for (auto func : funcs) {
+	Expr fm = u.getModel(func.first);
+	outs() << *(func.first) << " -> " << *fm << "\n";
       }
 
       if (!firstTime) {
@@ -2052,10 +2256,10 @@ namespace ufo
 	
 	for (auto d : ruleManager.decls) {
 	  //NOTE: assumption here is that funcs will have only nonfixed rels
-	  for (auto f : funcs) {
-	    if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(f->left()->left()))) {
+	  for (auto func : funcs) {
+	    if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*((func.first)->left()->left()))) {
 	      candidates[d->left()].clear();
-	      candidates[d->left()].insert(u.getModel(f));
+	      candidates[d->left()].insert(replaceAll(u.getModel(func.first), func.second, ruleManager.invVars[d->left()]));
 	      break;
 	    }
 	  }
@@ -2072,7 +2276,7 @@ namespace ufo
       
 
     //finds weakest interpretation for relations as per the order in relsOrderStr
-    void maximalSolve (const vector<string> & relsOrderStr, const string & smt, bool useGAS = true)
+    void maximalSolve (const vector<string> & relsOrderStr, const string & smt, bool useGAS = true, bool newenc = false)
     {
       	ExprVector relsOrder = getRels(relsOrderStr);
 	if (relsOrder.size() == 0)
@@ -2120,7 +2324,7 @@ namespace ufo
       while (true) {
 
 	if (useGAS) {
-	  Result_t maxResCHC = checkMaximalCHC(relsOrder[curRel], betterSoln, firstCall);
+	  Result_t maxResCHC = checkMaximalCHC(relsOrder[curRel], betterSoln, firstCall, newenc);
 	  
 	  if (maxResCHC == Result_t::SAT) {
 	    firstCall = false;
@@ -2143,8 +2347,14 @@ namespace ufo
 	    continue;
 	  }
 	}
+
+	Result_t maxRes;
 	
-	Result_t maxRes = checkMaximalSMT(relsOrder[curRel], betterSoln, firstCall);
+	if (firstCall || !newenc) {
+	  maxRes = checkMaximalSMT(relsOrder[curRel], betterSoln, firstCall);
+	} else {
+	  maxRes = checkMaximalSMTV2(relsOrder[curRel]);
+	}
 	  
 	if (maxRes == Result_t::UNSAT) {
 	  if (firstCall && candidates[relsOrder[curRel]].size() == 0) {
@@ -2275,7 +2485,7 @@ namespace ufo
     }
   };
 
-  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool z3check, bool useGAS)
+  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool z3check, bool useGAS, bool newenc)
   {
     
     ExprFactory m_efac;
@@ -2295,7 +2505,7 @@ namespace ufo
 
     if (inv == 0) {      
       if (maximal) {
-	nonlin.maximalSolve(relsOrder, smt, useGAS);	
+	nonlin.maximalSolve(relsOrder, smt, useGAS, newenc);	
       } else {
 	switch(nonlin.guessAndSolve()) {
 	case Result_t::UNSAT: nonlin.printCands(); break;
