@@ -1390,7 +1390,7 @@ namespace ufo
     // returns the name of the file where new rules are present 
     string constructMaximalRules(const Expr & rel, const string & oldsmt, const bool firstCall)
     {
-      bool addWeakRules = !(firstCall && candidates.size() == 0);
+      bool addWeakRules = !(firstCall && candidates[rel].size() == 0);
       stringstream newRules;
       stringstream newDecls;
       ExprSet allVars;
@@ -1877,7 +1877,7 @@ namespace ufo
 
       asserts << "(check-sat)\n(get-model)\n";
 
-      dumpToFile(decls, asserts, ruleManager.infile, newenc ? "_smt_" : "_smt_V2_");
+      dumpToFile(decls, asserts, ruleManager.infile, newenc ? "_smt_V2_" : "_smt_");
       
     }
 
@@ -1898,7 +1898,7 @@ namespace ufo
 	ExprVector args;
 	for (auto v : ruleManager.invVars[rel])
 	  args.push_back(v->left());
-	args.push_back(mk<IMPL>(mk<AND>(bind::fapp(reld, ruleManager.invVars[rel]), mk<NEG>(curcand)), mk<FALSE>(m_efac)));
+	args.push_back(mk<IMPL>(mk<AND>(bind::fapp(reld, ruleManager.invVars[rel]), curcand), mk<FALSE>(m_efac)));
 	constraints.push_back(mknary<FORALL>(args));
 	args.pop_back();
 	
@@ -1997,7 +1997,7 @@ namespace ufo
 
 	for (auto antec : antecs) {
 	  //vacuity
-	  if (hr.srcRelations.size() != 0) {
+	  if (hr.srcRelations.size() > 0) {
 	    args.push_back(conjoin(antec, m_efac));
 	    constraints.push_back(mknary<EXISTS>(args));
 	    args.pop_back();
@@ -2032,7 +2032,6 @@ namespace ufo
       if (!update) {
 	return Result_t::SAT;
       }
-	 
 
       for (auto func : funcs) {
 	Expr fm = u.getModel(func.first);
@@ -2055,7 +2054,8 @@ namespace ufo
 	    break;
 	  }
 	}
-      }      
+      }
+      return Result_t::SAT;
     }
     
     // smt solver based weaker solution synthesis
