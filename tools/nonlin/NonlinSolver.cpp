@@ -58,6 +58,7 @@ int main (int argc, char ** argv)
       "  --maximal                       get maximal specifications for under-constrained relations \n" <<      
       "  --rel-order <String List>       comma separated list of relations' order to be followed while finding maximal solution\n"
       " --nogas                         Don't run guessAndSolve \n"
+      " --useuc                        Use underconstrained relations\n";
       " --newenc                       Use the new encoding\n"   
       "  --z3check                       run just Z3 \n";
 
@@ -69,8 +70,9 @@ int main (int argc, char ** argv)
   vector<string> relsOrder = getCommaSepStrValues("--rel-order", vector<string>(), argc, argv);
   bool z3check = getBoolValue("--z3check", false, argc, argv);
   bool noGAS = getBoolValue("--nogas", false, argc, argv);
+  bool useUC = getBoolValue("--useuc", false, argc, argv);
   bool newenc = getBoolValue("--newenc", false, argc, argv);
   
-  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, z3check, !noGAS, newenc);
+  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, z3check, !noGAS, useUC, newenc);
   return 0;
 }
