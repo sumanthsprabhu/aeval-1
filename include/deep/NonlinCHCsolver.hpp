@@ -1672,14 +1672,17 @@ namespace ufo
 	}
       }
 
-      for (auto d : ruleManager.decls) {
-	Expr rel = d->left();
-	if (u.isSat(soln[rel], mk<NEG>(conjoin(candidates[rel], m_efac)))) {
-	  weakenRels.push_back(rel);
-	} else {
-	  fixedRels.push_back(rel);
+      if (rels.size() > 0) {
+	for (auto d : ruleManager.decls) {
+	  Expr rel = d->left();
+	  if (u.isSat(soln[rel], mk<NEG>(conjoin(candidates[rel], m_efac)))) {
+	    weakenRels.push_back(rel);
+	  } else {
+	    fixedRels.push_back(rel);
+	  }
 	}
       }
+      
       return Result_t::SAT;
       
     }
@@ -1766,7 +1769,7 @@ namespace ufo
 	  newRules << ")\n";
 	}
 	//debug
-	outs() << newRules.str();
+	// outs() << newRules.str();
       }
 
       printAllVarsRels(allVars, newDecls);
@@ -1785,7 +1788,8 @@ namespace ufo
       
 	//candidate[rel] => rel
 	newRules << "(rule (=> ";
-	u.print(conjoin(candidates[rel], m_efac), newRules);
+	Expr e = simplifyBool(conjoin(candidates[rel], m_efac)); //done to avoid single disjunct, which is causing crash later
+	u.print(e, newRules);
 	newRules << "( " << *rel;
 	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
 	  if (itr != ruleManager.invVars[rel].begin())
