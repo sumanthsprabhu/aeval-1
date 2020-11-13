@@ -1373,56 +1373,63 @@ namespace ufo
       return newsmt;
     }
 
-    ExprVector getUnderConsRels(bool recurse = false)
+    ExprVector getUnderConsRels(bool recurse = true)
     {
-      ExprVector retRels;
+      ExprVector ucRels;
+      ExprVector allRels;
+      ExprVector cRels;
+      
 
-      for (auto d : ruleManager.decls) 
-	retRels.push_back(d->left());
+      for (auto d : ruleManager.decls) {
+	allRels.push_back(d->left());
+	ucRels.push_back(d->left());
+      }
 
-      if (recurse) {
-	for (auto rItr = retRels.begin(); rItr != retRels.end();) {
-	  bool updated = false;
-	  for (auto & hr : ruleManager.chcs) {
-	    if (hr.dstRelation == *rItr) {
-	      if (hr.srcRelations.size() == 0) {
-		updated = true;
-		(void)retRels.erase(rItr);
-		break;
-	      } else {
-		for (int i = 0; i < hr.srcRelations.size(); i++) {
-		  if (find(retRels.begin(),  retRels.end(), hr.srcRelations[i]) == retRels.end()) {
-		    updated = true;
-		    (void)retRels.erase(rItr);
-		  }
-		}
-	      }
+      for (auto rItr = ucRels.begin(); rItr != ucRels.end();) {
+	bool found = false;
+	for (auto & hr : ruleManager.chcs) {
+	  if (hr.isQuery) continue;
+	  if (hr.dstRelation == *rItr && find(hr.srcRelations.begin(), hr.srcRelations.end(), *rItr) == hr.srcRelations.end()) {
+	    found = true;
+	    if (hr.srcRelations.size() == 0) {
+	      cRels.push_back(*rItr);
 	    }
-	  }	
-	  if (updated) {
-	    rItr = retRels.begin();
-	  } else {
-	    ++rItr;
+	    rItr = ucRels.erase(rItr);
+	    break;
 	  }
 	}
-      } else {
+	if (found) continue;
+	++rItr;
+      }
 
-	for (auto rItr = retRels.begin(); rItr != retRels.end();) {
-	  bool found = false;
-	  for (auto & hr : ruleManager.chcs) {
-	    if (hr.dstRelation == *rItr && find(hr.srcRelations.begin(), hr.srcRelations.end(), *rItr) == hr.srcRelations.end()) {
-	      found = true;
-	      rItr = retRels.erase(rItr);
-	      break;
-	    }
+      if (!recurse)
+	return ucRels;
+
+      for (int chci = 0; chci < ruleManager.chcs.size();) {
+	auto hr = ruleManager.chcs[chci];
+	if (hr.isQuery || hr.srcRelations.size() == 0) {
+	  chci++;
+	  continue;
+	}
+	bool restart = false;
+	for (int ri = 0; ri < hr.srcRelations.size(); ri++) {
+	  if (find (cRels.begin(), cRels.end(), hr.dstRelation) == cRels.end() && 
+	      find(ucRels.begin(),  ucRels.end(), hr.srcRelations[ri]) != ucRels.end() &&
+	      find(ucRels.begin(), ucRels.end(), hr.dstRelation) == ucRels.end()) {
+	    restart = true;
+	    ucRels.push_back(hr.dstRelation);
 	  }
-	  if (found) continue;
-	  ++rItr;
+	}
+	if (restart) {
+	  chci = 0;
+	} else {
+	  chci++;
 	}
       }
-      reverse(retRels.begin(), retRels.end());
       
-      return retRels;      
+      //      reverse(ucRels.begin(), ucRels.end());
+      
+      return ucRels;      
     }
 
 
@@ -1550,6 +1557,7 @@ namespace ufo
       {
 
 	ExprSet antec;
+	bool addVacuity = false;
 	
 	for (int i = 0; i < hr.srcRelations.size(); i++) {
 	  if (find(rels.begin(), rels.end(), hr.srcRelations[i]) == rels.end()) {
@@ -1558,6 +1566,7 @@ namespace ufo
 		Expr t = bind::fapp(d, hr.srcVars[i]);
 		funcs.insert({t, hr.srcVars[i]});
 		antec.insert(t);
+		addVacuity = true;
 		break;
 	      }
 	    }
@@ -1626,6 +1635,11 @@ namespace ufo
 
 	constraints.push_back(mknary<FORALL>(forallArgs));
 
+	if (addVacuity) {
+	  forallArgs.pop_back();
+	  forallArgs.push_back(conjoin(antec, m_efac));
+	  constraints.push_back(mknary<EXISTS>(forallArgs));
+	}
       }
 
       //DEBUG
@@ -1655,8 +1669,6 @@ namespace ufo
 	outs() << "model: " << *model << "\n";//DEBUG
 	Expr weakerSoln = mk<OR>(conjoin(candidates[rel],m_efac), replaceAll(model, newVars[rel], ruleManager.invVars[rel]));
 	soln.insert({rel, weakerSoln});
-	// candidates[rel].clear();
-	// candidates[rel].insert(weakerSoln);
 	outs() << "weakersoln: " << *weakerSoln << "\n";//DEBUG
       }	
 
@@ -1665,11 +1677,20 @@ namespace ufo
 	for (auto func : funcs) {
 	  if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*((func.first)->left()->left()))) {
 	    soln.insert({d->left(), replaceAll(u.getModel(func.first), func.second, ruleManager.invVars[d->left()])});
-	    // candidates[d->left()].clear();
-	    // candidates[d->left()].insert(replaceAll(u.getModel(func.first), func.second, ruleManager.invVars[d->left()]));
 	    break;
 	  }
 	}
+      }
+
+      //debug
+      for (auto se : soln) {
+	outs() << *(se.first) << "->\n";
+	outs() << *(se.second) << "\n";
+      }
+      for (auto ce : candidates) {
+	outs() << *(ce.first) << "->\n";
+	for (auto c : ce.second)
+	  outs() << *c << "\n";
       }
 
       if (rels.size() > 0) {
@@ -1712,7 +1733,48 @@ namespace ufo
       for (auto inve : ruleManager.invVars) {
 	allVars.insert(inve.second.begin(), inve.second.end());
       }
+
+      for (auto rel : weakenRels) {
+	
+	const string tmpRelName = "tmprel" + lexical_cast<string>(*rel);
       
+	newDecls << "(declare-rel " << tmpRelName << " (";
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  newDecls << " " << u.varType(*itr);
+	}
+	newDecls << "))\n";	
+      
+	//candidate[rel] => rel
+	newRules << "(rule (=> ";
+	Expr e = simplifyBool(conjoin(candidates[rel], m_efac)); //done to avoid single disjunct, which is causing crash later
+	u.print(e, newRules);
+	newRules << "( " << *rel;
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  if (itr != ruleManager.invVars[rel].begin())
+	    newRules << " ";
+	  newRules << " " << *itr;
+	}
+	newRules << ")))\n";
+
+	//~candidate[rel] /\ tmprel => rel
+	newRules << "(rule (=> (and ";
+	u.print(mk<NEG>(conjoin(candidates[rel], m_efac)), newRules);
+	newRules << "( " << tmpRelName;
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  if (itr != ruleManager.invVars[rel].begin())
+	    newRules << " ";
+	  newRules << " " << *itr;
+	}
+	newRules << ")) ( " << *rel;
+	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	  if (itr != ruleManager.invVars[rel].begin())
+	    newRules << " ";
+	  newRules << " " << *itr;
+	}
+	newRules << ")))\n";
+      }
+      
+
       for (auto & hr : ruleManager.chcs)
       {
 
@@ -1776,46 +1838,6 @@ namespace ufo
       
       newDecls << "(declare-rel " << queryRelStr << "())\n";
 
-      for (auto rel : weakenRels) {
-	
-	const string tmpRelName = "tmprel" + lexical_cast<string>(*rel);
-      
-	newDecls << "(declare-rel " << tmpRelName << " (";
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  newDecls << " " << u.varType(*itr);
-	}
-	newDecls << "))\n";	
-      
-	//candidate[rel] => rel
-	newRules << "(rule (=> ";
-	Expr e = simplifyBool(conjoin(candidates[rel], m_efac)); //done to avoid single disjunct, which is causing crash later
-	u.print(e, newRules);
-	newRules << "( " << *rel;
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  if (itr != ruleManager.invVars[rel].begin())
-	    newRules << " ";
-	  newRules << " " << *itr;
-	}
-	newRules << ")))\n";
-
-	//~candidate[rel] /\ tmprel => rel
-	newRules << "(rule (=> (and ";
-	u.print(mk<NEG>(conjoin(candidates[rel], m_efac)), newRules);
-	newRules << "( " << tmpRelName;
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  if (itr != ruleManager.invVars[rel].begin())
-	    newRules << " ";
-	  newRules << " " << *itr;
-	}
-	newRules << ")) ( " << *rel;
-	for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
-	  if (itr != ruleManager.invVars[rel].begin())
-	    newRules << " ";
-	  newRules << " " << *itr;
-	}
-	newRules << ")))\n";
-      }
-      
       newRules << "(query " << queryRelStr << ")\n";
 
       string newsmt = dumpToFile(newDecls, newRules, ruleManager.infile);
@@ -1915,6 +1937,10 @@ namespace ufo
 	  outs() << *(c) << "\n";
 	}
       }
+      outs() << "rels: \n";
+      for (auto r : rels) {
+	outs() << *r << "\n";
+      }
       
       while (true) {
 
@@ -1970,14 +1996,21 @@ namespace ufo
 	Result_t chcres = weakenUsingCHC(weakenRels, fixedRels);
 	if (chcres == Result_t::UNKNOWN) {
 	  for (auto ce : smtSoln) {
-	    if (find(fixedRels.begin(), fixedRels.end(), ce.first) == fixedRels.end()) {
-	      candidates[ce.first].clear();
-	      candidates[ce.first].insert(ce.second);
-	    }
+	    // if (find(fixedRels.begin(), fixedRels.end(), ce.first) == fixedRels.end()) {
+	    candidates[ce.first].clear();
+	    candidates[ce.first].insert(ce.second);
+	    // }
 	  }
 	}
 	
 	//debug
+	outs() << "SOLN:\n";
+	for (auto ce : candidates) {
+	  outs() << *(ce.first) << "->\n";
+	  for (auto c : ce.second) {
+	    outs() << *c <<"\n";
+	  }
+	}
 	for (auto hr : ruleManager.chcs) {
 	  if (!checkCHC(hr, candidates)) {
 	    outs() << "something is wrong (after CHC)!\n";
