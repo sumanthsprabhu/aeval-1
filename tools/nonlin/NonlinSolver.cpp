@@ -59,6 +59,7 @@ int main (int argc, char ** argv)
       "  --rel-order <String List>       comma separated list of relations' order to be followed while finding maximal solution\n"
       " --nogas                         Don't run CHC solving \n"
       " --useuc                        Use underconstrained relations\n"
+      " --fixcrel                      Fix constrained relations after getting initial solution\n"
       " --newenc                       Use the new encoding\n";
 
     return 0;
@@ -70,7 +71,13 @@ int main (int argc, char ** argv)
   bool noGAS = getBoolValue("--nogas", false, argc, argv);
   bool useUC = getBoolValue("--useuc", false, argc, argv);
   bool newenc = getBoolValue("--newenc", false, argc, argv);
+  bool fixcrel = getBoolValue("--fixcrel", false, argc, argv);
+
+  if (fixcrel && !useUC) {
+    outs() << "Can't use --fixcrel wihout --useuc\n";
+    return 1;
+  }
   
-  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, !noGAS, useUC, newenc);
+  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, !noGAS, useUC, newenc, fixcrel);
   return 0;
 }

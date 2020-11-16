@@ -1373,7 +1373,7 @@ namespace ufo
       return newsmt;
     }
 
-    ExprVector getUnderConsRels(bool recurse = true)
+    ExprVector getUnderConsRelsOld(bool recurse = true)
     {
       ExprVector ucRels;
       ExprVector allRels;
@@ -1431,6 +1431,55 @@ namespace ufo
       
       return ucRels;      
     }
+
+    ExprVector getUnderConsRels(bool recurse = true)
+    {
+      ExprVector ucRels = getAllRels();
+      
+      for (auto uItr = ucRels.begin(); uItr != ucRels.end();) {
+	bool found = false;
+	for (auto & hr : ruleManager.chcs) {
+	  if (hr.isQuery) continue;
+	  if (hr.dstRelation == *uItr && hr.srcRelations.size() == 0) {
+	    found = true;
+	    break;
+	  }
+	}	
+	if (found) {
+	  uItr = ucRels.erase(uItr);
+	} else {
+	++uItr;
+	}
+      }
+
+      for (auto uItr = ucRels.begin(); uItr != ucRels.end();) {
+	bool update = false;
+	for (auto & hr : ruleManager.chcs) {
+	  if (hr.isQuery) continue;
+	  if (hr.dstRelation != *uItr) continue;
+	  bool found;
+	  for (auto src : hr.srcRelations) {
+	    if (find(ucRels.begin(), ucRels.end(), src) != ucRels.end()) {
+	      found = true;
+	      break;
+	    }
+	  }
+	  if (!found) {
+	    update = true;
+	    break;
+	  }
+	}
+	if (update) {
+	  (void)ucRels.erase(uItr);
+	  uItr = ucRels.begin();
+	} else {
+	  uItr++;
+	}
+      }
+
+      return ucRels;
+    }
+	  
 
 
     void getCurSoln(map<Expr, ExprSet> & soln, const ExprVector & rels, map<Expr, ExprVector> & invVars)
@@ -1560,7 +1609,10 @@ namespace ufo
 	bool addVacuity = false;
 	
 	for (int i = 0; i < hr.srcRelations.size(); i++) {
-	  if (find(rels.begin(), rels.end(), hr.srcRelations[i]) == rels.end()) {
+	  if (find(fixedRels.begin(), fixedRels.end(), hr.srcRelations[i]) != fixedRels.end()) {
+	    Expr curCand = conjoin(candidates[hr.srcRelations[i]], m_efac);
+	    antec.insert(replaceAll(curCand, ruleManager.invVars[hr.srcRelations[i]], hr.srcVars[i]));
+	  } else if (find(rels.begin(), rels.end(), hr.srcRelations[i]) == rels.end()) {
 	    for (auto d : ruleManager.decls) {
 	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.srcRelations[i]))) {
 		Expr t = bind::fapp(d, hr.srcVars[i]);
@@ -1580,7 +1632,10 @@ namespace ufo
 
 	if (!hr.isQuery) {
 	  antec.insert(hr.body);
-	  if (find(rels.begin(), rels.end(), hr.dstRelation) == rels.end()) {
+	  if (find(fixedRels.begin(), fixedRels.end(), hr.dstRelation) != fixedRels.end()) {
+	    Expr curCand = conjoin(candidates[hr.dstRelation], m_efac);
+	    conseq = replaceAll(curCand, ruleManager.invVars[hr.dstRelation], hr.dstVars);
+	  } else if (find(rels.begin(), rels.end(), hr.dstRelation) == rels.end()) {
 	    for (auto d : ruleManager.decls) {
 	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.dstRelation))) {
 		Expr t = bind::fapp(d, hr.dstVars);
@@ -1696,6 +1751,7 @@ namespace ufo
       if (rels.size() > 0) {
 	for (auto d : ruleManager.decls) {
 	  Expr rel = d->left();
+	  if (find(fixedRels.begin(), fixedRels.end(), rel) != fixedRels.end()) continue;
 	  if (u.isSat(soln[rel], mk<NEG>(conjoin(candidates[rel], m_efac)))) {
 	    weakenRels.push_back(rel);
 	  } else {
@@ -1895,12 +1951,23 @@ namespace ufo
       return res;
     }
 
-    void maximalSolve (bool useGAS = true, bool useUC = false)
+    ExprVector vecDiff(ExprVector vec1, ExprVector vec2) {
+      ExprVector diff;
+      for (auto v1 : vec1) {
+	if (find (vec2.begin(), vec2.end(), v1) == vec2.end()) {
+	  diff.push_back(v1);
+	}
+      }
+      return diff;
+    }
+    
+    void maximalSolve (bool useGAS = true, bool useUC = false, bool fixCRels = false)
     {
 
       int itr = 0;
       bool firstSMTCall = !useGAS;
-      ExprVector rels = useUC ? getUnderConsRels() : getAllRels();
+      ExprVector allRels = getAllRels();
+      ExprVector rels = useUC ? getUnderConsRels() : allRels;
       
       if (useGAS) {
 	Result_t res = guessAndSolve();
@@ -1914,6 +1981,20 @@ namespace ufo
 	  return;
 	}
 
+	
+	if (res == Result_t::UNSAT && rels.size() == 0) {
+	  outs() << "Total iterations: "  << itr << "\n";
+	  //debug
+	  for (auto hr : ruleManager.chcs) {
+	    if (!checkCHC(hr, candidates)) {
+	      outs() << "something is wrong!(after GAS)\n";
+	      assert(0);
+	    }
+	  }	  
+	  printCands(true, candidates);
+	  return;  
+	}
+	
 	if (res == Result_t::SAT) {
 	  outs() << "sat\n";
 	  return;
@@ -1925,6 +2006,7 @@ namespace ufo
 	  outs() << "GAS is uk\n";
 	  firstSMTCall = true;
 	}
+
 	
       }
 
@@ -1946,7 +2028,7 @@ namespace ufo
 
 	Result_t maxRes;
 	ExprVector weakenRels;
-	ExprVector fixedRels;
+	ExprVector fixedRels = !firstSMTCall && fixCRels ? vecDiff(allRels, rels) : ExprVector() ;
 	map<Expr, Expr> smtSoln;
 
 	outs() << "current iteration: "<< itr << "\n";
@@ -2124,7 +2206,7 @@ namespace ufo
     }
   };
 
-  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool useGAS, bool useUC, bool newenc)
+  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool useGAS, bool useUC, bool newenc, bool fixCRels)
   {
     
     ExprFactory m_efac;
@@ -2135,7 +2217,7 @@ namespace ufo
     
     if (inv == 0) {      
       if (maximal) {
-	nonlin.maximalSolve(useGAS, useUC);	
+	nonlin.maximalSolve(useGAS, useUC, fixCRels);	
       } else {
 	switch(nonlin.guessAndSolve()) {
 	case Result_t::UNSAT: nonlin.printCands(); break;
