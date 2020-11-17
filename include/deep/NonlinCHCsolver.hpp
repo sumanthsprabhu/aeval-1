@@ -6,6 +6,7 @@
 #include <fstream>
 #include <chrono>
 #include <queue>
+// #include <stdlib.h>
 
 using namespace std;
 using namespace boost;
@@ -1327,7 +1328,7 @@ namespace ufo
       // std::replace(in.begin(), in.end(), ':', 'C');
     }
 
-    void printAllVarsRels(const ExprSet & allVars, stringstream & decls)
+    void printAllVarsRels(const ExprSet & allVars, stringstream & decls, bool sygus = false, map<Expr, ExprVector> syvars = map<Expr, ExprVector>())
     {
       for (auto v : allVars) {
 	decls << "(declare-var " << *v << " " << u.varType(v) << ")\n";
@@ -1335,21 +1336,35 @@ namespace ufo
 
       for (auto d : ruleManager.decls) {
 	if (d == ruleManager.failDecl) continue;
-	decls << "(declare-rel " << *bind::fname(d) << " (";
-        for (unsigned i = 0; i < bind::domainSz(d); i++)
-        {
-          Expr ty = bind::domainTy(d, i);
-          if (isOpX<BOOL_TY>(ty)) decls << "Bool ";
-          else if (isOpX<REAL_TY>(ty)) decls << "Real ";
-          else if (isOpX<INT_TY>(ty)) decls << "Int ";
-	  else decls << "UnSupportedSort";
+	if (sygus) {
+	  decls << "(synth-fun " << *(d->left()) << " (";
+	  if (syvars.find(d->left()) != syvars.end()) {
+	    for (auto var : syvars[d->left()]) {
+	      decls << "( " << *var << " " << u.varType(var) << ")";
+	    }
+	  } else {
+	    for (auto itr = ruleManager.invVars[d->left()].begin(), end = ruleManager.invVars[d->left()].end(); itr != end; ++itr) {
+	      decls << "( " << *itr << " " << u.varType(*itr) << ")";
+	    }
+	  }
+	  decls << ") Bool)\n";	
+	} else {
+	  decls << "(declare-rel " << *bind::fname(d) << " (";
+	  for (unsigned i = 0; i < bind::domainSz(d); i++)
+	  {
+	    Expr ty = bind::domainTy(d, i);
+	    if (isOpX<BOOL_TY>(ty)) decls << "Bool ";
+	    else if (isOpX<REAL_TY>(ty)) decls << "Real ";
+	    else if (isOpX<INT_TY>(ty)) decls << "Int ";
+	    else decls << "UnSupportedSort";
+	  }
+	  decls << ")) \n";	
 	}
-	decls << ")) \n";	
       }
     }
 
 
-    string dumpToFile(stringstream & decls, stringstream & rules, string oldsmt = "", string postfix = "")
+    string dumpToFile(stringstream & decls, stringstream & rules, string oldsmt = "", string postfix = "", bool sygus = false)
     {
       if (oldsmt.size() == 0) {
 	oldsmt = ruleManager.infile;
@@ -1358,7 +1373,7 @@ namespace ufo
       string newsmt = oldsmt.substr(oldsmt.find_last_of("/"));
       newsmt = "/tmp/" + newsmt.substr(0, newsmt.find_last_of("."));
       newsmt += postfix + "_" + to_string(std::chrono::system_clock::now().time_since_epoch().count());
-      newsmt += ".smt2";
+      newsmt += sygus ? ".sl" : ".smt2";
       
       string ds = decls.str();
       string rs = rules.str();
@@ -1951,6 +1966,295 @@ namespace ufo
       return res;
     }
 
+    string constructWeakeningSygus(const ExprVector & weakenRels, const ExprVector & fixedRels, map<Expr, ExprVector> & syvars, bool firstTime = false)
+    {
+      stringstream newRules;
+      stringstream newDecls;
+      ExprSet allVars;
+      string queryRelStr = "false";
+
+      for (auto inve : ruleManager.invVars) {
+	allVars.insert(inve.second.begin(), inve.second.end());
+      }
+
+      newDecls << "(set-logic LIA)\n";
+
+      if (!firstTime) {
+	for (auto rel : weakenRels) {
+	
+	  const string tmpRelName = "tmprel" + lexical_cast<string>(*rel);
+      
+	  newDecls << "(synth-fun " << tmpRelName << " (";
+	  for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	    newDecls << "( " << *itr << " " << u.varType(*itr) << ")";
+	  }
+	  newDecls << ") Bool)\n";	
+	
+	  //candidate[rel] => rel
+	  newRules << "(constraint (=> ";
+	  Expr e = simplifyBool(conjoin(candidates[rel], m_efac)); //done to avoid single disjunct, which is causing crash later
+	  u.print(e, newRules);
+	  newRules << "( " << *rel;
+	  for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	    if (itr != ruleManager.invVars[rel].begin())
+	      newRules << "  ";
+	    newRules << " " << *itr;
+	  }
+	  newRules << ")))\n";
+
+	  //~candidate[rel] /\ tmprel => rel
+	  newRules << "(constraint (=> (and ";
+	  u.print(mk<NEG>(conjoin(candidates[rel], m_efac)), newRules);
+	  newRules << "( " << tmpRelName;
+	  for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	    if (itr != ruleManager.invVars[rel].begin())
+	      newRules << " ";
+	    newRules << " " << *itr;
+	  }
+	  newRules << ")) ( " << *rel;
+	  for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	    if (itr != ruleManager.invVars[rel].begin())
+	      newRules << " ";
+	    newRules << " " << *itr;
+	  }
+	  newRules << ")))\n";
+
+	  //vacuity
+	  newRules << "(constraint (exists ( ";
+	  for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	    newRules << "( " << *itr << " " << u.varType(*itr) << ")";
+	  }
+	  newRules << ") (and";
+	  u.print(mk<NEG>(conjoin(candidates[rel], m_efac)), newRules);
+	  newRules << "( " << tmpRelName;
+	  for (auto itr = ruleManager.invVars[rel].begin(), end = ruleManager.invVars[rel].end(); itr != end; ++itr) {
+	    if (itr != ruleManager.invVars[rel].begin())
+	      newRules << " ";
+	    newRules << " " << *itr;
+	  }
+	  newRules << "))))\n";
+	
+	}
+      }
+
+      for (auto rel : weakenRels) {
+	//these variables will be used later to get solution from sygus solver
+	ExprVector newvars;
+	for (int i = 0; i < ruleManager.invVars[rel].size(); i++) {
+	  Expr var = ruleManager.invVars[rel][i];
+	  Expr newVar;
+	  string varname =  "sygus" + lexical_cast<string>(*rel) + to_string(i);
+	  sanitizeForDump(varname);
+	  if (bind::isIntConst(var)) {
+	    newVar = bind::intConst(mkTerm<string>(varname, m_efac));
+	  } else if (bind::isRealConst(var)) {
+	    newVar = bind::realConst(mkTerm<string>(varname, m_efac));
+	  } else if (bind::isBoolConst(var)) {
+	    newVar = bind::intConst(mkTerm<string>(varname, m_efac));
+	  } else {
+	    outs() << "Unsupport vartype: " << u.varType(var) << "\n";
+	    assert(0);
+	  }
+	  newvars.push_back(newVar);
+	}
+	syvars.insert({rel, newvars});
+      }
+      
+      for (auto & hr : ruleManager.chcs)
+      {
+
+	for (int i = 0; i < hr.srcVars.size(); i++) {
+	  allVars.insert(hr.srcVars[i].begin(), hr.srcVars[i].end());
+	}
+	allVars.insert(hr.locVars.begin(), hr.locVars.end());
+	allVars.insert(hr.dstVars.begin(), hr.dstVars.end());
+	
+
+	ExprSet antec;
+	for (int i = 0; i < hr.srcRelations.size(); i++) {
+	  Expr src = hr.srcRelations[i];
+	  if (find(fixedRels.begin(), fixedRels.end(), src) != fixedRels.end()) {
+	    Expr t = replaceAll(conjoin(candidates[src], m_efac), ruleManager.invVars[src], hr.srcVars[i]);
+	    antec.insert(t);
+	    
+	  } else {
+	    for (auto d : ruleManager.decls)
+	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*src)) {
+		Expr t = bind::fapp(d, hr.srcVars[i]);
+		antec.insert(t);
+		break;
+	      }
+	  }
+	}
+
+	//vacuity
+	if (!hr.isQuery) {
+	  antec.insert(hr.body);
+	}
+	
+	if (hr.srcRelations.size() != 0) {
+	  newRules << "(constraint (exists ( ";
+	  for (int i = 0; i < hr.srcVars.size(); i++) {
+	    for (auto sv : hr.srcVars[i]) 
+	      newRules << "( " << *sv << " " << u.varType(sv) << ")";
+	  }
+	  for (int i = 0; i < hr.dstVars.size(); i++) {
+	    newRules << "( " << *(hr.dstVars[i]) << " " << u.varType(hr.dstVars[i]) << ")";
+	  }
+	  for (int i = 0; i < hr.locVars.size(); i++) {
+	    newRules << "( " << *(hr.locVars[i]) << " " << u.varType(hr.locVars[i]) << ")";
+	  }
+	  	  newRules << ")";
+	  u.print(conjoin(antec, m_efac),  newRules);
+	  newRules << "))\n";
+	}
+	  
+	Expr conseq;
+	bool addFail = false;
+	
+	if (find(fixedRels.begin(), fixedRels.end(), hr.dstRelation) != fixedRels.end()) {
+	  antec.insert(mk<NEG>(replaceAll(conjoin(candidates[hr.dstRelation], m_efac), ruleManager.invVars[hr.dstRelation], hr.dstVars)));
+	  addFail = true;
+	} else {
+	  if (hr.isQuery) {
+	    antec.insert(hr.body);
+	    addFail = true;
+	  } else {
+	    for (auto d : ruleManager.decls)
+	      if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.dstRelation))) {
+		conseq = bind::fapp(d, hr.dstVars);
+		break;
+	      }	    
+	  }
+	}
+	
+	if (addFail) {
+	  newRules << "(constraint (=> ";
+	  u.print(conjoin(antec, m_efac), newRules);
+	  newRules << " " << queryRelStr << "))\n";
+	} else {
+	  newRules << "(constraint ";
+	  u.print(mk<IMPL>(conjoin(antec, m_efac), conseq), newRules);
+	  newRules << ")\n";
+	}
+
+	//debug
+	// outs() << newRules.str();
+      }
+
+      printAllVarsRels(allVars, newDecls, true, syvars);
+      
+      // newDecls << "(declare-rel " << queryRelStr << "())\n";
+
+      // newRules << "(query " << queryRelStr << ")\n";
+      newRules << "(check-synth)\n";
+
+      string newsmt = dumpToFile(newDecls, newRules, ruleManager.infile, "_sygus_", true);
+      
+      return newsmt;
+   
+    }
+
+    Result_t solveWeakSygus(map<Expr, ExprVector> & syvars, const ExprVector & weakenRels, const string & slfile, map<Expr, Expr> & soln)
+    {
+      //TODO: change this to input file or something
+      const string SYGUS_BIN = "/home/u1392220/tmp/max_synth/ws/modver/build/run_sygus.sh";
+      const string output = slfile.substr(0, slfile.find_last_of(".")) + ".out";
+
+      outs() << "starting sygus on file " << slfile << "\n";
+      
+      string cmd = SYGUS_BIN + " " + slfile + " " + output;
+      int sysret = system(cmd.c_str());
+      if (sysret == -1 || WEXITSTATUS(sysret) != 0) {
+	return Result_t::UNKNOWN;
+      }
+
+
+      EZ3 z3(m_efac);
+      
+      ifstream tmpinfile(output.c_str());      
+      if (!tmpinfile) {
+	  return Result_t::UNKNOWN;
+      }
+      stringstream tmpinstream;
+      tmpinstream << tmpinfile.rdbuf();
+      tmpinfile.close();
+      string defs(tmpinstream.str());
+            
+      for (auto rel : weakenRels)
+      {
+	stringstream smtstream;
+
+	smtstream << defs;
+	
+	for (auto sv : syvars[rel]) {
+	  smtstream << "(declare-fun " << *sv << " () " << u.varType(sv) << ")\n";
+	}
+	
+	string sanerelname = lexical_cast<string>(*rel);
+	sanitizeForDump(sanerelname);	
+	smtstream <<  "(assert( " + sanerelname;
+	for (int i = 0; i < syvars[rel].size(); i++) {
+	  smtstream << " " + lexical_cast<string>(*(syvars[rel][i]));
+	}	
+	smtstream << "))\n";
+
+	smtstream << "(check-sat)\n";
+
+	// outs() << smtstream.str();
+	
+	try {
+	  Expr funcAsserts = z3_from_smtlib(z3, smtstream.str());	  
+	  soln.insert({rel, replaceAll(funcAsserts, syvars[rel], ruleManager.invVars[rel])});
+			
+	} catch (z3::exception &e){
+	  char str[3000];
+	  strncpy(str, e.msg(), 300);
+	  outs() << "z3 exception: " << str << " while reading : " << smtstream.str() <<"\n";
+	  return Result_t::UNKNOWN;
+	}
+      }
+
+      //debug
+      outs() << "soln from sygus: \n";
+      for (auto se : soln) {
+	outs() << *(se.first) << " -> " << *(se.second) << "\n";
+      }
+      
+      return Result_t::SAT;
+            
+    }
+    
+    Result_t weakenUsingSygus(const ExprVector & weakenRels, const ExprVector & fixedRels, const bool & firstTime = false)
+    {
+      map<Expr, ExprVector> syvars;
+      string newsl = constructWeakeningSygus(weakenRels, fixedRels, syvars, firstTime);
+      map<Expr, Expr> soln;
+      
+      Result_t res = solveWeakSygus(syvars, weakenRels, newsl, soln);
+      
+      if (res == Result_t::SAT) {
+      	outs() << "sygus proved s\n";
+      	for (auto e : soln) {
+      	  if (find (fixedRels.begin(), fixedRels.end(), e.first) == fixedRels.end()) {	    
+      	      candidates[e.first].clear();
+      	      candidates[e.first].insert(e.second);
+      	  }
+      	}	
+      }
+
+      //flip the result as caller expects unsat first time; argh!
+      if (firstTime) {
+	if (res == Result_t::UNSAT) {
+	  res = Result_t::SAT;
+	} else if (res == Result_t::SAT) {
+	  res = Result_t::UNSAT;
+	}
+      }
+
+      return res;
+    }
+
     ExprVector vecDiff(ExprVector vec1, ExprVector vec2) {
       ExprVector diff;
       for (auto v1 : vec1) {
@@ -1961,7 +2265,7 @@ namespace ufo
       return diff;
     }
     
-    void maximalSolve (bool useGAS = true, bool useUC = false, bool fixCRels = false)
+    void maximalSolve (bool useGAS = true, bool usesygus = false, bool useUC = false, bool fixCRels = false)
     {
 
       int itr = 0;
@@ -1970,7 +2274,14 @@ namespace ufo
       ExprVector rels = useUC ? getUnderConsRels() : allRels;
       
       if (useGAS) {
-	Result_t res = guessAndSolve();
+	Result_t res;
+	if (!usesygus) {
+	  res = guessAndSolve();
+	}  else {
+	  ExprVector tmpfrels;
+	  res = weakenUsingSygus(allRels, tmpfrels, true);
+	}
+
 	itr++;
 	if (hasArrays) {
 	  switch (res) {
@@ -2075,7 +2386,8 @@ namespace ufo
 	  continue;
 	}
 
-	Result_t chcres = weakenUsingCHC(weakenRels, fixedRels);
+	Result_t chcres = usesygus ? weakenUsingSygus(weakenRels, fixedRels) : weakenUsingCHC(weakenRels, fixedRels);
+
 	if (chcres == Result_t::UNKNOWN) {
 	  for (auto ce : smtSoln) {
 	    // if (find(fixedRels.begin(), fixedRels.end(), ce.first) == fixedRels.end()) {
@@ -2100,6 +2412,38 @@ namespace ufo
 	  }
 	}
 	
+      }
+    }
+
+    void nonmaximalSolve(bool useGAS, bool usesygus)
+    {
+      Result_t res;
+      if (usesygus) {
+	ExprVector tmpfrels;
+	ExprVector allrels = getAllRels();
+	res = weakenUsingSygus(allrels, tmpfrels, true);
+      } else if (useGAS) {
+	res = guessAndSolve();
+      } else {
+	ExprVector weakenRels;
+	ExprVector fixedRels; 
+	map<Expr, Expr> smtSoln;
+	res = checkMaximalSMT(weakenRels, fixedRels, smtSoln);
+	if (res == Result_t::SAT) {
+	  for (auto ce : smtSoln) {
+	    candidates[ce.first].clear();
+	    candidates[ce.first].insert(ce.second);
+	  }
+	  res = Result_t::UNSAT;
+	} else {
+	  res = Result_t::UNKNOWN;
+	}
+      }
+
+      switch(res) {
+      case Result_t::UNSAT: printCands(); break;
+      case Result_t::SAT: outs() << "sat!\n"; break;
+      case Result_t::UNKNOWN: outs() << "unknown\n"; break;
       }
     }
 
@@ -2205,8 +2549,7 @@ namespace ufo
       }
     }
   };
-
-  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool useGAS, bool useUC, bool newenc, bool fixCRels)
+  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool useGAS, bool usesygus, bool useUC, bool newenc, bool fixCRels)
   {
     
     ExprFactory m_efac;
@@ -2217,13 +2560,9 @@ namespace ufo
     
     if (inv == 0) {      
       if (maximal) {
-	nonlin.maximalSolve(useGAS, useUC, fixCRels);	
+	nonlin.maximalSolve(useGAS, usesygus, useUC, fixCRels);	
       } else {
-	switch(nonlin.guessAndSolve()) {
-	case Result_t::UNSAT: nonlin.printCands(); break;
-	case Result_t::SAT: outs() << "sat!\n"; break;
-	case Result_t::UNKNOWN: outs() << "unknown\n"; break;
-	}
+	nonlin.nonmaximalSolve(useGAS, usesygus);
       }
 	
     } else {

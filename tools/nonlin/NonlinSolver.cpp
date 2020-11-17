@@ -57,7 +57,8 @@ int main (int argc, char ** argv)
       "  --cex <NUM>                     search for counterexamples of given length                  \n" <<
       "  --maximal                       get maximal specifications for under-constrained relations \n" <<      
       "  --rel-order <String List>       comma separated list of relations' order to be followed while finding maximal solution\n"
-      " --nogas                         Don't run CHC solving \n"
+      " --nogas                         Run only SMT solving \n"
+      " --usesygus                     Use SyGuS solver instead of CHC \n"
       " --useuc                        Use underconstrained relations\n"
       " --fixcrel                      Fix constrained relations after getting initial solution\n"
       " --newenc                       Use the new encoding\n";
@@ -69,6 +70,7 @@ int main (int argc, char ** argv)
   bool maximal = getBoolValue("--maximal", false, argc, argv);
   vector<string> relsOrder = getCommaSepStrValues("--rel-order", vector<string>(), argc, argv);
   bool noGAS = getBoolValue("--nogas", false, argc, argv);
+  bool usesygus = getBoolValue("--usesygus", false, argc, argv);
   bool useUC = getBoolValue("--useuc", false, argc, argv);
   bool newenc = getBoolValue("--newenc", false, argc, argv);
   bool fixcrel = getBoolValue("--fixcrel", false, argc, argv);
@@ -78,6 +80,6 @@ int main (int argc, char ** argv)
     return 1;
   }
   
-  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, !noGAS, useUC, newenc, fixcrel);
+  solveNonlin(string(argv[argc-1]), cex, str, maximal, relsOrder, !noGAS, usesygus, useUC, newenc, fixcrel);
   return 0;
 }
