@@ -18,8 +18,8 @@ namespace ufo
     Expr s;
     Expr t;
     ExprSet v; // existentially quantified vars
-    ExprVector sVars;
-    ExprVector stVars;
+    ExprSet sVars;
+    ExprSet stVars;
 
     ExprSet tConjs;
     ExprSet usedConjs;
@@ -58,8 +58,8 @@ namespace ufo
       skol(_skol),
       debug(_debug)
     {
-      filter (s, bind::IsConst (), back_inserter (sVars));
-      filter (boolop::land(s,t), bind::IsConst (), back_inserter (stVars));
+      filter (boolop::land(s,t), bind::IsConst (), inserter (stVars, stVars.begin()));
+      sVars = minusSets(stVars, v);
       getConj(t, tConjs);
 
       for (auto &exp: v) {
@@ -327,14 +327,11 @@ namespace ufo
     void printModelNeg()
     {
       outs () << "(model\n";
-      Expr s_witn = s;
-      Expr t_witn = t;
+      Expr witn = mk<IMPL>(s, t);
       for (auto &var : sVars){
         Expr assnmt = var == modelInvalid[var] ? getDefaultAssignment(var) : modelInvalid[var];
-        if (debug) {
-          s_witn = replaceAll(s_witn, var, assnmt);
-          t_witn = replaceAll(t_witn, var, assnmt);
-        }
+        if (debug)
+          witn = replaceAll(witn, var, assnmt);
 
         outs () << "  (define-fun " << *var << " () " <<
           (bind::isBoolConst(var) ? "Bool" : (bind::isIntConst(var) ? "Int" : "Real"))
@@ -343,8 +340,7 @@ namespace ufo
       outs () << ")\n";
 
       if (debug){
-        outs () << "Sanity check [model, S-part]: " << !((bool)(u.isSat(mk<NEG>(s_witn)))) << "\n";
-        outs () << "Sanity check [model, T-part]: " << !((bool)(u.isSat(t_witn))) << "\n";
+        outs () << "Sanity check [model]: " << (bool)u.isFalse(witn) << "\n";
       }
     }
 

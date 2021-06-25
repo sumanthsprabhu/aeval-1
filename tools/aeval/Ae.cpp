@@ -49,10 +49,11 @@ void printUsage()
 {
   outs() << "Usage: aeval <file1.smt2> [file2.smt2] [options]\n";
   outs() << "  Options:\n";
-  outs() << "    --skol\n";
-  outs() << "    --all-inclusive\n";
-  outs() << "    --compact\n";
-  outs() << "    --split\n";
+  outs() << "    <nothing>          just solve for the realizability\n";
+  outs() << "    --skol             extract Skolem functions\n";
+  outs() << "    --merge            combina Skolem functions into a single ite-formula\n";
+  outs() << "    --all-inclusive    attempt to make Skolems more general and nondeterministic\n";
+  outs() << "    --compact          attempt to make Skolems more compact\n";
 }
 
 int main (int argc, char ** argv)
@@ -71,10 +72,12 @@ int main (int argc, char ** argv)
   bool allincl = getBoolValue("--all-inclusive", false, argc, argv);
   bool compact = getBoolValue("--compact", false, argc, argv);
   bool debug = getBoolValue("--debug", false, argc, argv);
-  bool split = getBoolValue("--split", false, argc, argv);
+  bool split = !getBoolValue("--merge", false, argc, argv);
 
   Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
   Expr t = z3_from_smtlib_file (z3, getSmtFileName(2, argc, argv));
+
+  if (t != NULL) split = false;    // disable for JSyn
 
   if (allincl)
     getAllInclusiveSkolem(s, t, debug, compact);

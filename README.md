@@ -1,27 +1,31 @@
 About
 =====
 
-Skolemizer for AE-formulas in LIA/LRA based on the Expression library of <a href="http://seahorn.github.io/">SeaHorn</a> and the <a href="https://github.com/Z3Prover/z3">Z3</a> SMT solver. This is the main computational engine used in the Incremental Model Checking (<a href="http://www.inf.usi.ch/phd/fedyukovich/simabs_paper.pdf">LPAR'15</a>, <a href="http://www.inf.usi.ch/phd/fedyukovich/pde_paper.pdf">CAV'16</a>) and in the Program Synthesis from Assume-Guarantee contracts (<a href="https://arxiv.org/abs/1610.05867">preprint</a>).
+A functional synthesis tool based on the [Z3](https://github.com/Z3Prover/z3) SMT solver. It expects single-invocation specifications over linear integer/real arithmetic, encoded as `forall-exists` formulas, and aims at generating witnessing Skolem functions for (possibly, many) existentially-quantified variables. See the [VMCAI'19 paper](http://www.cs.fsu.edu/~grigory/aeval.pdf) for more details.
 
 Installation
 ============
 
-Compiles with gcc-5 (on Linux) and clang-700 (on Mac). Assumes preinstalled Gmp and Boost (libboost-system1.55-dev) packages.
+Compiles with gcc-7 (on Linux) and clang-900 (on Mac). Assumes preinstalled Gmp (with the `--enable-cxx` flag) and Boost 1.71 packages.
 
 * `cd aeval ; mkdir build ; cd build`
 * `cmake ../`
-* `make` to build dependencies (Z3 and LLVM)
+* `make` to build dependencies (i.e., it needs a particular version of Z3 and installs it automatically)
 * `make` to build AE-VAL
 
 The binary of AE-VAL can be found in `build/tools/aeval/`.
 
-Benchmarks
+Usage
 ==========
 
-Each benchmark is split into two files (for the universal and the existential parts of the formula). AE-VAL either returns `Valid` (with a skolem) or `Invalid`. Collection of the formulas can be found at `bench/tasks/` and the expected skolems at `bench/skolems/`.
+The tool takes as input formulas in SMT-LIB v2, e.g., the following specification for the `max` function:
 
-For example, if AE-VAL is run with the following input:
+`(assert (forall ((x1 Int) (x2 Int))`  
+&nbsp;&nbsp;&nbsp;&nbsp;`(exists ((y Int)) `  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`(and (>= y x1) (>= y x2) (or (= y x1) (= y x2))))))`  
 
-`./build/tools/aeval/aeval bench/tasks/fast_1_e8_747_extend_s_part.smt2 bench/tasks/fast_1_e8_747_extend_t_part.smt2 `
+Running `aeval --skol max.smt2`  yields the realizability result `valid` and the extracted Skolem for the `y` variable:
 
-Then, the output is `Valid` and the synthesized skolem should be close enough to the formula in `bench/skolems/fast_1_e8_747_extend_skolem.smt2`.
+`Iter: 2; Result: valid`  
+`(define-fun y ((x1 Int)(x2 Int)) Int`  
+&nbsp;&nbsp;&nbsp;&nbsp;`(ite (<= (+ x1 (- x2)) 0) x2 x1))`  
