@@ -194,11 +194,11 @@ namespace ufo
       {
         r = mk<IMPL>(r->first(), mk<FALSE>(m_efac));
       }
-      else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->left()) && hasUninterp(r->left()))
+      else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->left()))
       {
         r = mk<IMPL>(r->left()->left(), r->right());
       }
-      else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->right()) && hasUninterp(r->right()))
+      else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->right()))
       {
         r = mk<IMPL>(r->right()->left(), r->left());
       }
@@ -385,9 +385,10 @@ namespace ufo
 
     void print(HornRuleExt& hr)
     {
-        if (hr.isFact) outs() << "  INIT:\n";
-        if (hr.isInductive) outs() << "  TRANSITION RELATION:\n";
-        if (hr.isQuery) outs() << "  BAD:\n";
+        if (hr.isFact) outs() << "  INIT:\n    true";
+        else if (hr.isInductive) outs() << "  IND:\n";
+        else if (hr.isQuery) outs() << "  BAD:\n";
+        else outs () << "  RULE:\n";
 
         outs () << "    ";
 
