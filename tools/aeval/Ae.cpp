@@ -51,8 +51,8 @@ void printUsage()
   outs() << "  Options:\n";
   outs() << "    <nothing>          just solve for the realizability\n";
   outs() << "    --skol             extract Skolem functions\n";
+  outs() << "    --opt              optimize quantifier elimination\n";
   outs() << "    --merge            combina Skolem functions into a single ite-formula\n";
-  outs() << "    --all-inclusive    attempt to make Skolems more general and nondeterministic\n";
   outs() << "    --compact          attempt to make Skolems more compact\n";
 }
 
@@ -69,20 +69,29 @@ int main (int argc, char ** argv)
   EZ3 z3(efac);
 
   bool skol = getBoolValue("--skol", false, argc, argv);
-  bool allincl = getBoolValue("--all-inclusive", false, argc, argv);
   bool compact = getBoolValue("--compact", false, argc, argv);
+  bool opt = getBoolValue("--opt", false, argc, argv);
   bool debug = getBoolValue("--debug", false, argc, argv);
   bool split = !getBoolValue("--merge", false, argc, argv);
 
-  Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
-  Expr t = z3_from_smtlib_file (z3, getSmtFileName(2, argc, argv));
+  Expr s, t = NULL;
+  auto name = getSmtFileName(1, argc, argv);
+  if (name == NULL)
+  {
+    outs () << "No filename is given\n";
+    return 1;
+  }
+  s = z3_from_smtlib_file (z3, name);
+  name = getSmtFileName(2, argc, argv);
+  if (name != NULL)
+  {
+    t = z3_from_smtlib_file (z3, name);
+  }
 
   if (t != NULL) split = false;    // disable for JSyn
+  if (skol && opt) opt = false;    // skolem not supported (yet)
 
-  if (allincl)
-    getAllInclusiveSkolem(s, t, debug, compact);
-  else
-    aeSolveAndSkolemize(s, t, skol, debug, compact, split);
+  aeSolveAndSkolemize(s, t, skol, debug, opt, compact, split);
 
   return 0;
 }

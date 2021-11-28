@@ -49,6 +49,7 @@ DM-0002198
 #include <boost/pool/pool.hpp>
 #include <boost/pool/pool_alloc.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 
 #undef TRUE
 #undef FALSE
@@ -2311,11 +2312,12 @@ namespace expr
           assert (isOpX<FDECL> (v->left ()));
           return rangeTy (v->left ());
         }
-        
-        if (isOpX<TRUE> (v) || isOpX<FALSE> (v)) return mk<BOOL_TY> (v->efac ());
+
+        if (isOpX<ITE>(v)) return typeOf(v->last());
+        if (isOp<BoolOp>(v) || isOp<ComparissonOp> (v)) return mk<BOOL_TY> (v->efac ());
         if (isOpX<MPZ> (v)) return mk<INT_TY> (v->efac ());
         if (isOpX<MPQ> (v)) return mk<REAL_TY> (v->efac ());
-         
+
         if (isOpX<BIND> (v)) return bind::type (v);
         
         if (isBoolVar (v) || isBoolConst (v))
@@ -2325,13 +2327,29 @@ namespace expr
         if (isRealVar (v) || isRealConst (v))
           return mk<REAL_TY> (v->efac ());
 
-        std::cerr << "WARNING: could not infer type of: " << *v << "\n";
+        if (isOp<NumericOp>(v)) return typeOf(v->left());
+
+        if (isOpX<STORE>(v)) return sort::arrayTy(typeOf(v->right()), typeOf(v->last()));
+        if (isOpX<SELECT>(v)) return typeOf(v->left())->last();
+        if (isOpX<CONST_ARRAY>(v)) return sort::arrayTy(v->left(), typeOf(v->right()));
         
-        assert (0 && "Unreachable");
+//      std::cerr << "WARNING: could not infer type of: " << *v << "\n";
+//      assert (0 && "Unreachable");
+
         return Expr();    
       }
       inline Expr sortOf (Expr v) {return typeOf (v);}
-     
+
+      Expr mkMPZ(boost::multiprecision::cpp_int a, ExprFactory& efac)
+      {
+        return mkTerm (mpz_class (boost::lexical_cast<std::string>(a)), efac);
+      }
+
+      Expr mkMPZ(int a, ExprFactory& efac)
+      {
+        return mkTerm (mpz_class (a), efac);
+      }
+
       struct FAPP_PS
       {
 	static inline void print (std::ostream &OS,
@@ -2383,8 +2401,6 @@ namespace expr
         _args.insert (_args.end (), ++(fapp->args_begin ()), fapp->args_end ());
         return mknary<FAPP> (_args);
       }
-      
-      
     }
     
       
@@ -2733,12 +2749,29 @@ namespace expr
 
     struct RAVALLM: public std::unary_function<Expr,VisitAction>
     {
-      ExprMap& m;
+      ExprMap* m;
 
-      RAVALLM (ExprMap& _m) : m(_m) { }
+      RAVALLM (ExprMap* _m) : m(_m) { }
       VisitAction operator() (Expr exp) const
       {
-        if (m[exp] != NULL) return VisitAction::changeTo (m[exp]);
+        auto it = m->find(exp);
+        if (it != m->end()) return VisitAction::changeTo (it->second);
+        return VisitAction::doKids ();
+      }
+    };
+
+    struct RAVALLMR: public std::unary_function<Expr,VisitAction>
+    {
+      ExprMap* m;
+
+      RAVALLMR (ExprMap* _m) : m(_m) { }
+      VisitAction operator() (Expr exp) const
+      {
+        auto it = m->begin();
+        while (it != m->end())
+          if (it->second == exp)
+            return VisitAction::changeTo (it->first);
+          else ++it;
         return VisitAction::doKids ();
       }
     };
@@ -2783,7 +2816,7 @@ namespace expr
 	if (filter (exp))
 	  { 
 	    *(out++) = exp;
-	    return VisitAction::skipKids ();
+	    return VisitAction::doKids ();
 	  }
 
 	return VisitAction::doKids ();
@@ -2879,6 +2912,31 @@ namespace expr
       }
     };
 
+    struct HasUninterp : public std::unary_function<Expr,VisitAction>
+    {
+      bool found;
+
+      HasUninterp () : found(false) {}
+
+      VisitAction operator() (Expr exp)
+      {
+        if (found || isOpX<FAPP>(exp))
+        {
+          if (exp->arity() > 0)
+          {
+            if (isOpX<FDECL>(exp->arg(0)) &&
+                "BOOL" == boost::lexical_cast<std::string> (exp->arg(0)->last()) &&
+                exp->arg(0)->arity() > 2)
+            {
+              found = true;
+              return VisitAction::skipKids ();
+            }
+          }
+        }
+        return VisitAction::doKids ();
+      }
+    };
+
     struct SIZE : public std::unary_function<Expr,VisitAction>
     {
       size_t count;
@@ -2951,15 +3009,31 @@ namespace expr
   inline Expr replaceAll (Expr exp, ExprVector& s, ExprVector& t)
   {
     assert(s.size() == t.size());
+    if (s.empty()) return exp;
     RAVALL rav(&s, &t);
-    return dagVisit (rav, exp);
+    Expr tmp = dagVisit (rav, exp);
+    if (tmp == exp) return exp;
+    else return replaceAll(tmp, s, t);
   }
 
   // pairwise replacing
   inline Expr replaceAll (Expr exp, ExprMap& m)
   {
-    RAVALLM rav(m);
-    return dagVisit (rav, exp);
+    if (m.empty()) return exp;
+    RAVALLM rav(&m);
+    Expr tmp = dagVisit (rav, exp);
+    if (tmp == exp) return tmp;
+    else return replaceAll(tmp, m);
+  }
+
+  // pairwise replacing
+  inline Expr replaceAllRev (Expr exp, ExprMap& m)
+  {
+    if (m.empty()) return exp;
+    RAVALLMR rav(&m);
+    Expr tmp = dagVisit (rav, exp);
+    if (tmp == exp) return exp;
+    else return replaceAllRev(tmp, m);
   }
 
   /** Replace all occurrences of s by t while simplifying the result */
@@ -3055,6 +3129,13 @@ namespace expr
   template <typename M> inline bool containsOp (Expr e1)
   {
     ContainsOp<M> co;
+    dagVisit (co, e1);
+    return co.found;
+  }
+
+  inline bool hasUninterp (Expr e1)
+  {
+    HasUninterp co;
     dagVisit (co, e1);
     return co.found;
   }
