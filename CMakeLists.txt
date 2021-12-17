@@ -126,6 +126,9 @@ else()
   set(GMPXX_LIB "")
 endif()
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 
 install(DIRECTORY include/
   DESTINATION include
@@ -164,4 +167,6 @@ include_directories(BEFORE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_BINARY_DIR}/include)
 
+
 add_subdirectory(tools)
+
