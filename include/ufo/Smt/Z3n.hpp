@@ -1007,18 +1007,10 @@ namespace ufo
         ctx.check_error ();
 
         z3::ast_vector rules (ctx, Z3_fixedpoint_get_rules(ctx, fp));
-<<<<<<< HEAD
         if (rules.empty()) rules = z3::ast_vector(ctx, Z3_fixedpoint_get_assertions(ctx, fp));
-=======
         z3::ast_vector asss (ctx, Z3_fixedpoint_get_assertions(ctx, fp));
->>>>>>> a64d9a4c... updated dependencies; custom MBP procedure; optimized QE
 
         for (unsigned i = 0; i < rules.size (); ++i){
-<<<<<<< HEAD
-          Expr rule = z3.toExpr (rules [i]);
-          m_rules.push_back(rule);
-        }
-=======
             Expr rule = z3.toExpr (rules [i]);
             m_rules.push_back(rule);
         }
@@ -1033,7 +1025,6 @@ namespace ufo
         }
 
         //TODO: vars
->>>>>>> a64d9a4c... updated dependencies; custom MBP procedure; optimized QE
     }
   };
 
