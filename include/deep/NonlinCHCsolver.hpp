@@ -1044,6 +1044,88 @@ namespace ufo
       return true;
     }
 
+    void inferInv()
+    {
+      // vector<HornRuleExt*> worklist;
+      // for (auto & hr : ruleManager.chcs) {
+      // 	if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
+      // 	worklist.push_back(&hr);
+      // }
+
+      // while (true) {
+	
+      // 	auto candidatesTmp = candidates;
+      //   for (bool fwd : { false, true })
+      //   {
+      // 	  declsVisited.clear();
+      //     declsVisited.insert(ruleManager.failDecl);
+      //     propagate(fwd);
+      //     filterUnsat();
+      //     if (fwd) multiHoudini(worklist);  // i.e., weaken
+      //     else strengthen();
+      //     if (checkAllOver(true)) return printCands();
+      //   }
+	
+      //   if (equalCands(candidatesTmp)) break;
+      // }
+
+      for (auto & hr : ruleManager.chcs) {
+      	auto candidatesTmp = candidates;
+      	bool res = checkCHC(hr, candidates);
+      	  if (!res) {
+      	    declsVisited.clear();
+      	    declsVisited.insert(ruleManager.failDecl);
+      	    propagate(false);
+	    filterUnsat();
+	    strengthen();
+	    if (equalCands(candidatesTmp)) {
+	      break;
+	    }
+	  }
+      }
+	      
+      if (checkAllOver(true)) return printCands();
+      outs () << "unknown\n";
+
+      
+      // for (auto & hr : ruleManager.chcs) {
+      // 	auto candidatesTmp = candidates;
+
+      // 	bool res = false;
+      // 	for (bool fwd : {false, true}) {
+      // 	  res = checkCHC(hr, candidates);
+      // 	  if (!res) {
+      // 	    declsVisited.clear();
+      // 	    declsVisited.insert(ruleManager.failDecl);
+      // 	    propagate(fwd);
+      // 	    if (fwd) {
+      // 	      multiHoudini(worklist);	    
+      // 	    } else {
+      // 	      filterUnsat();
+      // 	      strengthen();
+      // 	    }
+      // 	  }
+      // 	}
+	
+      // 	if (!res) {
+      // 	  if (equalCands(candidatesTmp)) {
+      // 	    break;
+      // 	  }
+      // 	  else {
+      // 	    inferInv();
+      // 	  }
+      // 	}
+      // }
+      
+      // if (checkAllOver(true)) {
+      // 	return printCands();
+      // } else {
+      // 	outs() << "unknown\n";
+      // 	return;
+      // }
+    }
+    
+      
     void guessAndSolve()
     {
       vector<HornRuleExt*> worklist;
@@ -1193,7 +1275,8 @@ namespace ufo
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv == 0)
-      nonlin.guessAndSolve();
+      // nonlin.guessAndSolve();
+      nonlin.inferInv();
     else
       nonlin.solveIncrementally(inv);
   };
