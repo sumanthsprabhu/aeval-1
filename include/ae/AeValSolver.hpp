@@ -88,36 +88,42 @@ namespace ufo
     /**
      * Decide validity of \forall s => \exists v . t
      */
+
     boost::tribool solve ()
     {
       smt.reset();
       smt.assertExpr (s);
+
       if (!smt.solve ()) {
-        if (debug) outs() << "\nE.v.: -; Iter.: 0; Result: valid\n\n";
+        if (debug) outs () << "The S-part is unsatisfiable;\nFormula is trivially valid\n";
         return false;
+      } else {
+        ZSolver<EZ3>::Model m = smt.getModel();
+
+        for (auto &e: sVars)
+          // keep a model in case the formula is invalid
+          modelInvalid[e] = m.eval(e);
       }
+
       if (v.size () == 0)
       {
         smt.assertExpr (boolop::lneg (t));
         boost::tribool res = smt.solve ();
-        if (debug) outs() << "\nE.v.: 0; Iter.: 0; Result: " << (res? "invalid" : "valid") << "\n\n";
         return res;
       }
-      
+
       smt.push ();
       smt.assertExpr (t);
-      
+
       boost::tribool res = true;
-      
+
       while (smt.solve ())
       {
-        if (debug) {
-          outs() << ".";
-          outs().flush ();
-        }
+        outs().flush ();
+
         ZSolver<EZ3>::Model m = smt.getModel();
 
-        if (debug)
+        if (debug && false)
         {
           outs() << "\nmodel " << partitioning_size << ":\n";
           for (auto &exp: stVars)
@@ -129,18 +135,20 @@ namespace ufo
         }
 
         getMBPandSkolem(m);
-
         smt.pop();
-        smt.assertExpr(boolop::lneg(projections[partitioning_size++]));
-        if (!smt.solve()) { res = false; break; }
+        smt.assertExpr(boolop::lneg(projections.back()));
+        if (!smt.solve()) {
+          res = false; break;
+        } else {
+          // keep a model in case the formula is invalid
+          m = smt.getModel();
+          for (auto &e: sVars)
+            modelInvalid[e] = m.eval(e);
+        }
 
         smt.push();
         smt.assertExpr (t);
       }
-      
-      if (debug) outs() << "\nE.v.: " << v.size() << "; Iter.: " << partitioning_size
-             << "; Result: " << (res? "invalid" : "valid") << "\n\n";
-      
       return res;
     }
     

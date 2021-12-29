@@ -288,6 +288,7 @@ namespace ufo
             origDstSymbs.push_back(*it);
         }
         allOrigSymbs.insert(allOrigSymbs.end(), origDstSymbs.begin(), origDstSymbs.end());
+	simplBoolReplCnj(allOrigSymbs, lin);
         hr.body = conjoin(lin, m_efac);
 
         vector<ExprVector> tmp;

@@ -1497,6 +1497,110 @@ namespace ufo
     }
   };
 
+    inline static void simplBoolReplCnjHlp(ExprVector& hardVars, ExprSet& cnjs, ExprVector& facts, ExprVector& repls)
+  {
+    bool toRestart;
+    ExprSet toInsert;
+
+    for (auto it = cnjs.begin(); it != cnjs.end(); )
+    {
+      if (isOpX<TRUE>(*it))
+      {
+        it = cnjs.erase(it);
+        continue;
+      }
+
+      Expr a = replaceAll(*it, facts, repls);
+
+      if (isOpX<IMPL>(a))
+      {
+        Expr lhs = simplifyBool(a->left());
+        bool isTrue = isOpX<TRUE>(lhs);
+        bool isFalse = isOpX<FALSE>(lhs);
+
+        if (isTrue) a = simplifyBool(a->right());
+        else if (isFalse) continue;
+      }
+
+      if (isOpX<EQ>(a))
+      {
+        // TODO: this could be symmetric
+
+        Expr lhs = simplifyBool(a->left());
+        bool isTrue = isOpX<TRUE>(lhs);
+        bool isFalse = isOpX<FALSE>(lhs);
+
+        if (isTrue) a = simplifyBool(a->right());
+        else if (isFalse)
+        {
+          a = simplifyBool(mkNeg(a->right()));
+        }
+      }
+
+      ExprSet splitted;
+      getConj(a, splitted);
+      toRestart = false;
+
+      for (auto & c : splitted)
+      {
+        if (isBoolConst(c))
+        {
+          bool nothard = find(hardVars.begin(), hardVars.end(), c) == hardVars.end();
+          if (nothard)
+          {
+            toRestart = true;
+            facts.push_back(c);
+            repls.push_back(mk<TRUE>(a->getFactory()));
+            facts.push_back(mkNeg(c));
+            repls.push_back(mk<FALSE>(a->getFactory()));
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else if (isOpX<NEG>(c) && isBoolConst(c->left()))
+        {
+          bool nothardLeft = find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end();
+          if (nothardLeft)
+          {
+            toRestart = true;
+            facts.push_back(c);
+            repls.push_back(mk<TRUE>(a->getFactory()));
+            facts.push_back(c->left());
+            repls.push_back(mk<FALSE>(a->getFactory()));
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else
+        {
+          toInsert.insert(c);
+        }
+      }
+
+      it = cnjs.erase(it);
+      if (toRestart) break;
+    }
+
+    cnjs.insert(toInsert.begin(), toInsert.end());
+    if (toRestart)
+    {
+      simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
+    }
+  }
+
+  // simplification based on boolean replacements
+  inline static void simplBoolReplCnj(ExprVector& hardVars, ExprSet& cnjs)
+  {
+    ExprVector facts;
+    ExprVector repls;
+    simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
+  }
+
+  
   static Expr simplifyArr (Expr exp);
 
   struct SimplifyArrExpr
@@ -4832,84 +4936,85 @@ namespace ufo
     return false;
   }
 
-  void getLiterals (Expr exp, ExprSet& lits, bool splitEqs = true)
+  void getLiterals (Expr exp, ExprSet& lits, bool splitEqs)
   {
     ExprFactory& efac = exp->getFactory();
     Expr el = exp->left();
     Expr er = exp->right();
     if (isOp<ComparissonOp>(exp) && !splitEqs)
       {
-	if (isNumeric(el) || (isBoolConstOrNegation(el) && isBoolConstOrNegation(er)))
-	  lits.insert(exp);
+  	if (isNumeric(el) || (isBoolConstOrNegation(el) && isBoolConstOrNegation(er)))
+  	  lits.insert(exp);
       }
     if (isOpX<EQ>(exp) && isBoolean(er))
       {
-	getLiterals(mkNeg(el), lits, splitEqs);
-	getLiterals(er, lits, splitEqs);
-	getLiterals(mkNeg(er), lits, splitEqs);
-	getLiterals(el, lits, splitEqs);
+  	getLiterals(mkNeg(el), lits, splitEqs);
+  	getLiterals(er, lits, splitEqs);
+  	getLiterals(mkNeg(er), lits, splitEqs);
+  	getLiterals(el, lits, splitEqs);
       }
     if (isOpX<EQ>(exp) && isNumeric(el) && !containsOp<MOD>(exp))
       {
-	getLiterals(mk<GEQ>(el, er), lits, splitEqs);
-	getLiterals(mk<LEQ>(el, er), lits, splitEqs);
+  	getLiterals(mk<GEQ>(el, er), lits, splitEqs);
+  	getLiterals(mk<LEQ>(el, er), lits, splitEqs);
       }
     else if (isOpX<NEQ>(exp) && isNumeric(el) && !containsOp<MOD>(exp))
       {
-	getLiterals(mk<GT>(el, er), lits, splitEqs);
-	getLiterals(mk<LT>(el, er), lits, splitEqs);
+  	getLiterals(mk<GT>(el, er), lits, splitEqs);
+  	getLiterals(mk<LT>(el, er), lits, splitEqs);
       }
     else if ((isOpX<EQ>(exp) || isOpX<NEQ>(exp) || isOpX<XOR>(exp)) && isBoolean(el))
       {
-	getLiterals(el, lits, splitEqs);
-	getLiterals(er, lits, splitEqs);
-	getLiterals(mkNeg(el), lits, splitEqs);
-	getLiterals(mkNeg(er), lits, splitEqs);
+  	getLiterals(el, lits, splitEqs);
+  	getLiterals(er, lits, splitEqs);
+  	getLiterals(mkNeg(el), lits, splitEqs);
+  	getLiterals(mkNeg(er), lits, splitEqs);
       }
     else if (isOpX<NEG>(exp))
       {
-	if (isBoolConst(el))
-	  lits.insert(exp);
-	else
-	  getLiterals(mkNeg(el), lits, splitEqs);
+  	if (isBoolConst(el))
+  	  lits.insert(exp);
+  	else
+  	  getLiterals(mkNeg(el), lits, splitEqs);
       }
     else if (isOpX<IMPL>(exp))
       {
-	getLiterals(mkNeg(el), lits, splitEqs);
-	getLiterals(er, lits, splitEqs);
+  	getLiterals(mkNeg(el), lits, splitEqs);
+  	getLiterals(er, lits, splitEqs);
       }
     else if (isOpX<IFF>(exp))
       {
-	getLiterals(mkNeg(el), lits, splitEqs);
-	getLiterals(er, lits, splitEqs);
-	getLiterals(mkNeg(er), lits, splitEqs);
-	getLiterals(el, lits, splitEqs);
+  	getLiterals(mkNeg(el), lits, splitEqs);
+  	getLiterals(er, lits, splitEqs);
+  	getLiterals(mkNeg(er), lits, splitEqs);
+  	getLiterals(el, lits, splitEqs);
       }
     else if (bind::typeOf(exp) == mk<BOOL_TY>(efac) &&
-	     !containsOp<AND>(exp) && !containsOp<OR>(exp))
+  	     !containsOp<AND>(exp) && !containsOp<OR>(exp))
       {
-	if (isOp<ComparissonOp>(exp))
-	  {
-	    exp = rewriteDivConstraints(exp);
-	    exp = rewriteModConstraints(exp);
-	    if (isOpX<AND>(exp) || isOpX<OR>(exp))
-	      getLiterals(exp, lits, splitEqs);
-	    else lits.insert(exp);
-	  }
-	else lits.insert(exp);
+  	if (isOp<ComparissonOp>(exp))
+  	  {
+  	    exp = rewriteDivConstraints(exp);
+  	    exp = rewriteModConstraints(exp);
+  	    if (isOpX<AND>(exp) || isOpX<OR>(exp))
+  	      getLiterals(exp, lits, splitEqs);
+  	    else lits.insert(exp);
+  	  }
+  	else lits.insert(exp);
       }
     else if (isOpX<AND>(exp) || isOpX<OR>(exp))
       {
-	for (int i = 0; i < exp->arity(); i++)
-	  getLiterals(exp->arg(i), lits, splitEqs);
+  	for (int i = 0; i < exp->arity(); i++)
+  	  getLiterals(exp->arg(i), lits, splitEqs);
       }
     else if (!isOpX<TRUE>(exp) && !isOpX<FALSE>(exp))
       {
-	errs () << "unable lit: " << *exp << "\n";
-	assert(0);
+  	errs () << "unable lit: " << *exp << "\n";
+  	assert(0);
       }
   }
 
+  void getLiterals (Expr exp, ExprSet& lits);
 
   // assumes no ITE (to be extended)
   struct LitMiner : public std::unary_function<Expr, VisitAction>
@@ -4946,6 +5051,14 @@ namespace ufo
       return VisitAction::doKids ();
     }
   };
+
+  inline void getLiterals (Expr exp, ExprSet& lits)
+  {
+    LitMiner trm (lits);
+    exp = boolop::nnf(simplifyBool(exp));
+    dagVisit (trm, exp);
+  }
+
 
   template<typename Range> static void print(Range& r, string msg, bool brk = false)
   {
