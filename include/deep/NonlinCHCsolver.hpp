@@ -1044,31 +1044,70 @@ namespace ufo
       return true;
     }
 
-    void inferInv()
+    //Algorithm exactly like in the paper: only backward, single CHC propagation
+    void inferInv1()
+    {      
+      for (auto & hr : ruleManager.chcs) {
+      	auto candidatesTmp = candidates;
+      	bool res = checkCHC(hr, candidates);
+      	  if (!res) {
+      	    propagateCandidatesBackward(hr);
+	    filterUnsat();
+	    strengthen();
+	    //no progress
+	    if (equalCands(candidatesTmp)) {
+	      break;
+	    }
+	    inferInv1();
+	  }
+      }      
+      // double check
+      if (checkAllOver(true)) {
+	return printCands();
+      } else {
+	outs () << "unknown\n";
+      }
+    }
+
+    //backward and forward, single CHC propagation
+    void inferInv2()
     {
-      // vector<HornRuleExt*> worklist;
-      // for (auto & hr : ruleManager.chcs) {
-      // 	if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
-      // 	worklist.push_back(&hr);
-      // }
+      hasArrays = true;
+      for (auto & hr : ruleManager.chcs) {
+      	auto candidatesTmp = candidates;
+	for (bool fwd : {false, true}) {
+	  bool res = checkCHC(hr, candidates);
+	  if (!res) {
+	    if (fwd) {
+	      propagateCandidatesForward(hr);
+	      vector<HornRuleExt*> worklist;
+	      worklist.push_back(&hr);
+	      multiHoudini(worklist);	      
+	    } else {	      
+	      propagateCandidatesBackward(hr);
+	      filterUnsat();
+	      strengthen();
+	    }
+	    //no progress
+	    if (equalCands(candidatesTmp)) {
+	      break;
+	    }
+	    inferInv2();
+	  }
+	}
+      }      
+      // double check
+      if (checkAllOver(true)) {
+	return printCands();
+      } else {
+	outs () << "unknown\n";
+      }
+    }
 
-      // while (true) {
-	
-      // 	auto candidatesTmp = candidates;
-      //   for (bool fwd : { false, true })
-      //   {
-      // 	  declsVisited.clear();
-      //     declsVisited.insert(ruleManager.failDecl);
-      //     propagate(fwd);
-      //     filterUnsat();
-      //     if (fwd) multiHoudini(worklist);  // i.e., weaken
-      //     else strengthen();
-      //     if (checkAllOver(true)) return printCands();
-      //   }
-	
-      //   if (equalCands(candidatesTmp)) break;
-      // }
-
+        
+    //backward, multiple CHC propagation
+    void inferInv3()
+    {
       for (auto & hr : ruleManager.chcs) {
       	auto candidatesTmp = candidates;
       	bool res = checkCHC(hr, candidates);
@@ -1081,51 +1120,18 @@ namespace ufo
 	    if (equalCands(candidatesTmp)) {
 	      break;
 	    }
+	    inferInv3(); //perhaps, this call is not required?
 	  }
       }
-	      
-      if (checkAllOver(true)) return printCands();
-      outs () << "unknown\n";
-
-      
-      // for (auto & hr : ruleManager.chcs) {
-      // 	auto candidatesTmp = candidates;
-
-      // 	bool res = false;
-      // 	for (bool fwd : {false, true}) {
-      // 	  res = checkCHC(hr, candidates);
-      // 	  if (!res) {
-      // 	    declsVisited.clear();
-      // 	    declsVisited.insert(ruleManager.failDecl);
-      // 	    propagate(fwd);
-      // 	    if (fwd) {
-      // 	      multiHoudini(worklist);	    
-      // 	    } else {
-      // 	      filterUnsat();
-      // 	      strengthen();
-      // 	    }
-      // 	  }
-      // 	}
-	
-      // 	if (!res) {
-      // 	  if (equalCands(candidatesTmp)) {
-      // 	    break;
-      // 	  }
-      // 	  else {
-      // 	    inferInv();
-      // 	  }
-      // 	}
-      // }
-      
-      // if (checkAllOver(true)) {
-      // 	return printCands();
-      // } else {
-      // 	outs() << "unknown\n";
-      // 	return;
-      // }
+      //double check
+      if (checkAllOver(true)) {
+	return printCands();
+      } else {
+	outs () << "unknown\n";
+      }      
     }
     
-      
+    //Backward and forward, multiple CHC propagation      
     void guessAndSolve()
     {
       vector<HornRuleExt*> worklist;
@@ -1276,7 +1282,7 @@ namespace ufo
     NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv == 0)
       // nonlin.guessAndSolve();
-      nonlin.inferInv();
+      nonlin.inferInv2();
     else
       nonlin.solveIncrementally(inv);
   };
