@@ -111,7 +111,7 @@ namespace ufo
     {
       if (!u.isSat(e)) return;
       if (!containsOp<FORALL>(e) && !containsOp<EXISTS>(e)) e = rewriteSelectStore(e);
-
+      
       ExprSet qVars, varsToElim, complex;
       ExprMap repls, replsRev;
       map<Expr, ExprSet> replIngr;
@@ -207,7 +207,6 @@ namespace ufo
         }
       }
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
-
       if (backward) eTmp = mkNeg(eTmp);
       eTmp = simplifyBool(simplifyArithm(eTmp, false, true));
 
@@ -1044,6 +1043,193 @@ namespace ufo
       return true;
     }
 
+    enum AbdType : unsigned char
+      {
+       REAL = 0,
+       MOCK
+      };
+    
+    //Simple initial candidate: formula present in query
+    void getInitialCandidates()
+    {
+      for (auto & hr : ruleManager.chcs) {
+	if (hr.isQuery) {
+	  assert(hr.srcRelations.size() == 1 &&
+		 "Nonlinear CHCs are not supported");
+	  Expr c = mkNeg(hr.body);
+	  c = replaceAll(c, hr.srcVars[0], ruleManager.invVars[hr.srcRelations[0]]);
+	  candidates[hr.srcRelations[0]].insert(c);
+	  return;
+	}
+      }
+    }
+
+    void getIterators(HornRuleExt& hr, ExprVector& itrs)
+    {
+      for (int i = 0; i < hr.srcVars[0].size(); i++) {
+	Expr a = hr.srcVars[0][i];
+	Expr b = hr.dstVars[i];
+	if (containsOp<ARRAY_TY>(a) || containsOp<ARRAY_TY>(b)) continue;
+	if (u.implies(hr.body, mk<GT>(a,b)) ||
+	    u.implies(hr.body, mk<LT>(a,b))) {
+	  itrs.push_back(a);
+	}
+      }
+    }
+
+
+    Expr getDummyArrayAssign(HornRuleExt& hr, const ExprVector & qVars)
+    {
+      ExprSet dassign;
+      for (int i = 0; i < hr.srcVars[0].size(); i++) {
+	if (containsOp<ARRAY_TY>(hr.srcVars[0][i])) {
+	  for (auto qv : qVars) {
+	    dassign.insert(mk<EQ>(hr.dstVars[i],
+				  mk<STORE>(hr.srcVars[0][i],
+					    mk<SELECT>(hr.srcVars[0][i], qv),
+					    qv)));
+	  }
+	}
+      }
+      return conjoin(dassign, m_efac);
+    }
+
+    
+    //perform range abduction
+    Expr getArrayFormula(HornRuleExt& hr, Expr dc, AbdType abd)
+    {
+      Expr dstRel = hr.dstRelation;
+      Expr srcRel = hr.srcRelations[0];
+
+      ExprVector srcVars(hr.srcVars[0].begin(), hr.srcVars[0].end());
+      ExprVector dstVars(hr.dstVars.begin(), hr.dstVars.end());
+      ExprVector srcInvVars(ruleManager.invVars[srcRel].begin(), ruleManager.invVars[srcRel].end());
+      ExprVector dstInvVars(ruleManager.invVars[dstRel].begin(), ruleManager.invVars[dstRel].end());
+
+      ExprSet qVarsTmp;
+      getQuantifiedVars(dc, qVarsTmp);
+      ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
+      getIterators(hr, itrVars);
+
+      ExprSet all, newCnd;
+
+      // all.insert(replaceAll(conjoin(candidates[srcRel], m_efac),
+      // 			    srcInvVars,
+      // 			    srcVars));
+      
+      if (isOpX<FORALL>(dc) || isOpX<EXISTS>(dc)) {	
+	all.insert(mkNeg(replaceAll(dc->last(), dstInvVars, dstVars)));
+      } else {
+	//TODO: handle unquantified
+	return mk<TRUE>(m_efac);
+      }
+
+      if (abd == AbdType::REAL) {
+	ExprSet nbody, nbodyTmp;
+	getConj(hr.body, nbodyTmp);
+	for (auto nbt : nbodyTmp) {
+	  if (containsOp<ARRAY_TY>(nbt)) {
+	    nbody.insert(replaceAll(nbt, itrVars, qVars));
+	  } else {
+	    nbody.insert(nbt);
+	  }
+	}	
+	all.insert(conjoin(nbody, m_efac));
+      } else {
+	Expr dbody = getDummyArrayAssign(hr, qVars);
+	all.insert(dbody);
+      }
+
+      ExprVector abdVars(qVars.begin(), qVars.end());
+      for (auto sv : srcVars) {
+	if (find(itrVars.begin(), itrVars.end(), sv) == itrVars.end()) {
+	  abdVars.push_back(sv);
+	}
+      }
+
+      outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
+      
+      preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
+      return replaceAll(mk<NEG>(conjoin(newCnd, m_efac)), srcVars, srcInvVars);
+    }
+
+    void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & rangeFormulas)
+    {
+      for (auto a : qVars) {
+	for (auto b : itrVars) {
+	  rangeFormulas.push_back(mk<LEQ>(a,b));
+	  rangeFormulas.push_back(mk<GEQ>(a,b));
+	}
+      }      
+    }
+
+    
+    void abduce(HornRuleExt& hr)
+    {
+      if (hr.isFact || hr.isQuery) return;
+
+      assert(hr.srcRelations.size() == 1 &&
+	     "Nonlinear CHCs are not supported");
+
+      Expr dstRel = hr.dstRelation;
+      Expr srcRel = hr.srcRelations[0];
+
+      ExprSet dstCands;      
+      for (auto c : candidates[dstRel]) {
+	dstCands.insert(simplifyBool(c));
+      }
+      
+      for (auto dc : dstCands) {
+	ExprSet dcDisjs;
+	getDisj(dc, dcDisjs);
+	
+	for (auto dcd : dcDisjs) {
+	  boost::tribool forall(boost::indeterminate);
+	  if (isOpX<FORALL>(dcd)) {
+	    forall = true;
+	  } else if (isOpX<EXISTS>(dcd)) {
+	    forall = false;
+	  } else {
+	    //TODO: handle non quantified case
+	    continue;
+	  }
+
+	  Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL);
+	  Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK);
+
+	  outs() << "AF1: " << *arrayFormula1 << "\n";
+	  outs() << "AF2: " << *arrayFormula2 << "\n";
+	
+	  ExprSet qVarsTmp;
+	  getQuantifiedVars(dcd, qVarsTmp);
+	  ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
+	  getIterators(hr, itrVars);
+
+	
+	  ExprVector rangeFormulas;
+	  getRangeFormulas(qVars, itrVars, rangeFormulas);
+	
+	  for (auto rf : rangeFormulas) {
+	    ExprVector args1;
+	    ExprVector args2;
+	    for (auto qVar : qVars) {
+	      args1.push_back(qVar->left());
+	      args2.push_back(qVar->left());
+	    }
+	    if (forall == true) {
+	      args1.push_back(mk<OR>(arrayFormula1, mk<NEG>(rf)));
+	      args2.push_back(mk<OR>(arrayFormula2, rf));
+	      candidates[srcRel].insert(mk<AND>(mknary<FORALL>(args1), mknary<FORALL>(args2)));
+	    } else if (forall == false) {
+	      args1.push_back(mk<AND>(arrayFormula1, mk<NEG>(rf)));
+	      args2.push_back(mk<AND>(arrayFormula2, rf));
+	      candidates[srcRel].insert(mk<OR>(mknary<EXISTS>(args1), mknary<EXISTS>(args2)));
+	    } 
+	  }
+	}
+      }
+    }
+    
     //Algorithm exactly like in the paper: only backward, single CHC propagation
     void inferInv1()
     {      
@@ -1051,7 +1237,12 @@ namespace ufo
       	auto candidatesTmp = candidates;
       	bool res = checkCHC(hr, candidates);
       	  if (!res) {
-      	    propagateCandidatesBackward(hr);
+	    abduce(hr);
+	    //debug
+	    for (auto a : candidates[hr.srcRelations[0]]) {
+	      outs() << "CAND: " << *a << "\n";
+	    }
+	    
 	    filterUnsat();
 	    strengthen();
 	    //no progress
@@ -1280,10 +1471,10 @@ namespace ufo
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
-    if (inv == 0)
-      // nonlin.guessAndSolve();
-      nonlin.inferInv2();
-    else
+    if (inv == 0) {
+      nonlin.getInitialCandidates();
+      nonlin.inferInv1();
+    } else
       nonlin.solveIncrementally(inv);
   };
 }
