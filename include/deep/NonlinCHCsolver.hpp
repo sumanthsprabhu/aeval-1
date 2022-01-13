@@ -206,9 +206,23 @@ namespace ufo
           }
         }
       }
+
+      // outs() << "eTmp: " << *eTmp << "\n";
+      // for (auto v : varsToElim) {
+      // 	outs() << "ev: " << *v << "\n";
+      // }
+      
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
       if (backward) eTmp = mkNeg(eTmp);
       eTmp = simplifyBool(simplifyArithm(eTmp, false, true));
+      // ExprSet ineqETmp1, ineqETmp2;
+      // ineqETmp1.insert(eTmp);
+      // shrinkCnjs(ineqETmp1);
+      // getConj(conjoin(ineqETmp1, m_efac), ineqETmp2);
+      // ineqMerger(ineqETmp2, true);
+      // eTmp = conjoin(ineqETmp2, m_efac);
+      
+      // outs() << "eTmp: " << *eTmp << "\n";
 
       ExprSet tmp;
 
@@ -1086,9 +1100,11 @@ namespace ufo
 	  for (auto qv : qVars) {
 	    dassign.insert(mk<EQ>(hr.dstVars[i],
 				  mk<STORE>(hr.srcVars[0][i],
-					    mk<SELECT>(hr.srcVars[0][i], qv),
-					    qv)));
+					    qv,
+					    mk<SELECT>(hr.srcVars[0][i], qv))));
 	  }
+	} else {
+	  dassign.insert(mk<EQ>(hr.dstVars[i], hr.srcVars[0][i]));
 	}
       }
       return conjoin(dassign, m_efac);
@@ -1147,18 +1163,21 @@ namespace ufo
 	}
       }
 
-      outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
+      // outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
+      // for (auto av : abdVars) {
+      // 	outs() << "av: " << *av << "\n";
+      // }
       
       preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
-      return replaceAll(mk<NEG>(conjoin(newCnd, m_efac)), srcVars, srcInvVars);
+      return replaceAll(conjoin(newCnd, m_efac), srcVars, srcInvVars);
     }
 
     void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & rangeFormulas)
     {
       for (auto a : qVars) {
 	for (auto b : itrVars) {
-	  rangeFormulas.push_back(mk<LEQ>(a,b));
-	  rangeFormulas.push_back(mk<GEQ>(a,b));
+	  rangeFormulas.push_back(mk<LT>(a,b));
+	  rangeFormulas.push_back(mk<GT>(a,b));
 	}
       }      
     }
@@ -1197,8 +1216,8 @@ namespace ufo
 	  Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL);
 	  Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK);
 
-	  outs() << "AF1: " << *arrayFormula1 << "\n";
-	  outs() << "AF2: " << *arrayFormula2 << "\n";
+	  // outs() << "AF1: " << *arrayFormula1 << "\n";
+	  // outs() << "AF2: " << *arrayFormula2 << "\n";
 	
 	  ExprSet qVarsTmp;
 	  getQuantifiedVars(dcd, qVarsTmp);
@@ -1231,32 +1250,38 @@ namespace ufo
     }
     
     //Algorithm exactly like in the paper: only backward, single CHC propagation
-    void inferInv1()
+    void inferInv1(bool & resultPrinted)
     {      
       for (auto & hr : ruleManager.chcs) {
       	auto candidatesTmp = candidates;
       	bool res = checkCHC(hr, candidates);
       	  if (!res) {
-	    abduce(hr);
-	    //debug
-	    for (auto a : candidates[hr.srcRelations[0]]) {
-	      outs() << "CAND: " << *a << "\n";
-	    }
-	    
+	    abduce(hr);	    
 	    filterUnsat();
 	    strengthen();
+	    vector<HornRuleExt*> worklist;
+	    for (auto & hr : ruleManager.chcs)
+	    {
+	      if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
+	      worklist.push_back(&hr);
+	    }
+	    multiHoudini(worklist);
+
 	    //no progress
 	    if (equalCands(candidatesTmp)) {
 	      break;
 	    }
-	    inferInv1();
+	    inferInv1(resultPrinted);
 	  }
       }      
       // double check
-      if (checkAllOver(true)) {
-	return printCands();
-      } else {
-	outs () << "unknown\n";
+      if (!resultPrinted) {
+	resultPrinted = true;
+	if (checkAllOver(true)) {
+	  return printCands();
+	} else {
+	  outs () << "unknown\n";
+	}
       }
     }
 
@@ -1473,7 +1498,8 @@ namespace ufo
     NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv == 0) {
       nonlin.getInitialCandidates();
-      nonlin.inferInv1();
+      bool rp = false;
+      nonlin.inferInv1(rp);
     } else
       nonlin.solveIncrementally(inv);
   };
