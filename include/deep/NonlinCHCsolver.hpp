@@ -209,7 +209,7 @@ namespace ufo
 
       // outs() << "eTmp: " << *eTmp << "\n";
       // for (auto v : varsToElim) {
-      // 	outs() << "ev: " << *v << "\n";
+      //        outs() << "ev: " << *v << "\n";
       // }
       
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
@@ -1067,48 +1067,48 @@ namespace ufo
     void getInitialCandidates()
     {
       for (auto & hr : ruleManager.chcs) {
-	if (hr.isQuery) {
-	  assert(hr.srcRelations.size() == 1 &&
-		 "Nonlinear CHCs are not supported");
-	  Expr c = mkNeg(hr.body);
-	  c = replaceAll(c, hr.srcVars[0], ruleManager.invVars[hr.srcRelations[0]]);
-	  candidates[hr.srcRelations[0]].insert(c);
-	  return;
-	}
+        if (hr.isQuery) {
+          assert(hr.srcRelations.size() == 1 &&
+                 "Nonlinear CHCs are not supported");
+          Expr c = mkNeg(hr.body);
+          c = replaceAll(c, hr.srcVars[0], ruleManager.invVars[hr.srcRelations[0]]);
+          candidates[hr.srcRelations[0]].insert(c);
+          return;
+        }
       }
     }
 
     void getIterators(HornRuleExt& hr, ExprVector& itrs, bool & incr)
     {
       for (int i = 0; i < hr.srcVars[0].size(); i++) {
-	Expr a = hr.srcVars[0][i];
-	Expr b = hr.dstVars[i];
-	if (containsOp<ARRAY_TY>(a) || containsOp<ARRAY_TY>(b)) continue;
-	if (u.implies(hr.body, mk<GT>(a,b))) {
-	  incr = false;
-	  itrs.push_back(a);
-	} else if (u.implies(hr.body, mk<LT>(a,b))) {
-	  incr = true;
-	  itrs.push_back(a);
-	}
+        Expr a = hr.srcVars[0][i];
+        Expr b = hr.dstVars[i];
+        if (containsOp<ARRAY_TY>(a) || containsOp<ARRAY_TY>(b)) continue;
+        if (u.implies(hr.body, mk<GT>(a,b))) {
+          incr = false;
+          itrs.push_back(a);
+        } else if (u.implies(hr.body, mk<LT>(a,b))) {
+          incr = true;
+          itrs.push_back(a);
+        }
       }
     }
 
 
-    Expr getDummyArrayAssign(HornRuleExt& hr, const ExprVector & qVars)
+    Expr getMockArrayAssign(HornRuleExt& hr, const ExprVector & qVars)
     {
       ExprSet dassign;
       for (int i = 0; i < hr.srcVars[0].size(); i++) {
-	if (containsOp<ARRAY_TY>(hr.srcVars[0][i])) {
-	  for (auto qv : qVars) {
-	    dassign.insert(mk<EQ>(hr.dstVars[i],
-				  mk<STORE>(hr.srcVars[0][i],
-					    qv,
-					    mk<SELECT>(hr.srcVars[0][i], qv))));
-	  }
-	} else {
-	  dassign.insert(mk<EQ>(hr.dstVars[i], hr.srcVars[0][i]));
-	}
+        if (containsOp<ARRAY_TY>(hr.srcVars[0][i])) {
+          for (auto qv : qVars) {
+            dassign.insert(mk<EQ>(hr.dstVars[i],
+                                  mk<STORE>(hr.srcVars[0][i],
+                                            qv,
+                                            mk<SELECT>(hr.srcVars[0][i], qv))));
+          }
+        } else {
+          dassign.insert(mk<EQ>(hr.dstVars[i], hr.srcVars[0][i]));
+        }
       }
       return conjoin(dassign, m_efac);
     }
@@ -1128,42 +1128,42 @@ namespace ufo
       ExprSet all, newCnd;
 
       // all.insert(replaceAll(conjoin(candidates[srcRel], m_efac),
-      // 			    srcInvVars,
-      // 			    srcVars));
+      //                            srcInvVars,
+      //                            srcVars));
       
-      if (isOpX<FORALL>(dc) || isOpX<EXISTS>(dc)) {	
-	all.insert(mkNeg(replaceAll(dc->last(), dstInvVars, dstVars)));
+      if (isOpX<FORALL>(dc) || isOpX<EXISTS>(dc)) {     
+        all.insert(mkNeg(replaceAll(dc->last(), dstInvVars, dstVars)));
       } else {
-	//TODO: handle unquantified
-	return mk<TRUE>(m_efac);
+        //TODO: handle unquantified
+        return mk<TRUE>(m_efac);
       }
 
       if (abd == AbdType::REAL) {
-	ExprSet nbody, nbodyTmp;
-	getConj(hr.body, nbodyTmp);
-	for (auto nbt : nbodyTmp) {
-	  if (containsOp<ARRAY_TY>(nbt)) {
-	    nbody.insert(replaceAll(nbt, itrVars, qVars));
-	  } else {
-	    nbody.insert(nbt);
-	  }
-	}	
-	all.insert(conjoin(nbody, m_efac));
+        ExprSet nbody, nbodyTmp;
+        getConj(hr.body, nbodyTmp);
+        for (auto nbt : nbodyTmp) {
+          if (containsOp<ARRAY_TY>(nbt)) {
+            nbody.insert(replaceAll(nbt, itrVars, qVars));
+          } else {
+            nbody.insert(nbt);
+          }
+        }       
+        all.insert(conjoin(nbody, m_efac));
       } else {
-	Expr dbody = getDummyArrayAssign(hr, qVars);
-	all.insert(dbody);
+        Expr mbody = getMockArrayAssign(hr, qVars);
+        all.insert(mbody);
       }
 
       ExprVector abdVars(qVars.begin(), qVars.end());
       for (auto sv : srcVars) {
-	if (find(itrVars.begin(), itrVars.end(), sv) == itrVars.end()) {
-	  abdVars.push_back(sv);
-	}
+        if (find(itrVars.begin(), itrVars.end(), sv) == itrVars.end()) {
+          abdVars.push_back(sv);
+        }
       }
 
       // outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
       // for (auto av : abdVars) {
-      // 	outs() << "av: " << *av << "\n";
+      //        outs() << "av: " << *av << "\n";
       // }
       
       preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
@@ -1173,13 +1173,13 @@ namespace ufo
     void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & rangeFormulas, bool incr)
     {
       for (auto a : qVars) {
-	for (auto b : itrVars) {
-	  if (incr) {
-	    rangeFormulas.push_back(mk<LT>(a,b));
-	  } else {
-	    rangeFormulas.push_back(mk<GT>(a,b));
-	  }
-	}
+        for (auto b : itrVars) {
+          if (incr) {
+            rangeFormulas.push_back(mk<GEQ>(a,b));
+          } else {
+            rangeFormulas.push_back(mk<LEQ>(a,b));
+          }
+        }
       }      
     }
 
@@ -1189,65 +1189,63 @@ namespace ufo
       if (hr.isFact || hr.isQuery) return;
 
       assert(hr.srcRelations.size() == 1 &&
-	     "Nonlinear CHCs are not supported");
+             "Nonlinear CHCs are not supported");
 
       Expr dstRel = hr.dstRelation;
       Expr srcRel = hr.srcRelations[0];
 
       ExprSet dstCands;      
       for (auto c : candidates[dstRel]) {
-	dstCands.insert(simplifyBool(c));
+        dstCands.insert(simplifyBool(c));
       }
       
       for (auto dc : dstCands) {
-	ExprSet dcDisjs;
-	getDisj(dc, dcDisjs);
-	
-	for (auto dcd : dcDisjs) {
-	  boost::tribool forall(boost::indeterminate);
-	  if (isOpX<FORALL>(dcd)) {
-	    forall = true;
-	  } else if (isOpX<EXISTS>(dcd)) {
-	    forall = false;
-	  } else {
-	    //TODO: handle non quantified case
-	    continue;
-	  }
+        ExprSet dcDisjs;
+        getDisj(dc, dcDisjs);
+        
+        for (auto dcd : dcDisjs) {
+          boost::tribool forall(boost::indeterminate);
+          if (isOpX<FORALL>(dcd)) {
+            forall = true;
+          } else if (isOpX<EXISTS>(dcd)) {
+            forall = false;
+          } else {
+            //TODO: handle non quantified case
+            continue;
+          }
 
-	  ExprSet qVarsTmp;
-	  getQuantifiedVars(dcd, qVarsTmp);
-	  ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
-	  bool itrUp = true;
-	  getIterators(hr, itrVars, itrUp);
+          ExprSet qVarsTmp;
+          getQuantifiedVars(dcd, qVarsTmp);
+          ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
+          bool itrUp = true;
+          getIterators(hr, itrVars, itrUp);
 
-	  Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars);
-	  Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars);
+          Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars);
+          Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars);
+        
+          ExprVector rangeFormulas;
+          getRangeFormulas(qVars, itrVars, rangeFormulas, itrUp);
 
-	  // outs() << "AF1: " << *arrayFormula1 << "\n";
-	  // outs() << "AF2: " << *arrayFormula2 << "\n";
-	
-	  ExprVector rangeFormulas;
-	  getRangeFormulas(qVars, itrVars, rangeFormulas, itrUp);
-
-	  for (auto rf : rangeFormulas) {
-	    outs() << "RF: " << *rf << "\n";
-	    ExprVector args1;
-	    ExprVector args2;
-	    for (auto qVar : qVars) {
-	      args1.push_back(qVar->left());
-	      args2.push_back(qVar->left());
-	    }
-	    if (forall == true) {
-	      args1.push_back(mk<OR>(arrayFormula1, mk<NEG>(rf)));
-	      args2.push_back(mk<OR>(arrayFormula2, rf));
-	      candidates[srcRel].insert(mk<AND>(mknary<FORALL>(args1), mknary<FORALL>(args2)));
-	    } else if (forall == false) {
-	      args1.push_back(mk<AND>(arrayFormula1, mk<NEG>(rf)));
-	      args2.push_back(mk<AND>(arrayFormula2, rf));
-	      candidates[srcRel].insert(mk<OR>(mknary<EXISTS>(args1), mknary<EXISTS>(args2)));
-	    } 
-	  }
-	}
+          // candidates[srcRel].clear();
+          for (auto rf : rangeFormulas) {
+            outs() << "RF: " << *rf << "\n";
+            ExprVector args1;
+            ExprVector args2;
+            for (auto qVar : qVars) {
+              args1.push_back(qVar->left());
+              args2.push_back(qVar->left());
+            }
+            if (forall == true) {
+              args1.push_back(mk<OR>(arrayFormula1, mk<NEG>(rf)));
+              args2.push_back(mk<OR>(arrayFormula2, rf));
+              candidates[srcRel].insert(mk<AND>(mknary<FORALL>(args1), mknary<FORALL>(args2)));
+            } else if (forall == false) {
+              args1.push_back(mk<AND>(arrayFormula1, mk<NEG>(rf)));
+              args2.push_back(mk<AND>(arrayFormula2, rf));
+              candidates[srcRel].insert(mk<OR>(mknary<EXISTS>(args1), mknary<EXISTS>(args2)));
+            } 
+          }
+        }
       }
     }
     
@@ -1255,39 +1253,34 @@ namespace ufo
     void inferInv1(bool & resultPrinted)
     {      
       for (auto & hr : ruleManager.chcs) {
-      	auto candidatesTmp = candidates;
-      	bool res = checkCHC(hr, candidates);
-      	  if (!res) {
-	    abduce(hr);	    
-	    filterUnsat();
-	    strengthen();
-	    outs() << "\nBefore\n";
-	    printCands(false,true);
-	    vector<HornRuleExt*> worklist;
-	    for (auto & hr : ruleManager.chcs)
-	    {
-	      if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
-	      worklist.push_back(&hr);
-	    }
-	    multiHoudini(worklist);
-	    outs() << "\nAfter\n";
-	    printCands(false,true);
-	    
-	    //no progress
-	    if (equalCands(candidatesTmp)) {
-	      break;
-	    }
-	    inferInv1(resultPrinted);
-	  }
+        auto candidatesTmp = candidates;
+        bool res = checkCHC(hr, candidates);
+          if (!res) {
+            abduce(hr);     
+            filterUnsat();
+            vector<HornRuleExt*> worklist;
+            for (auto & hr : ruleManager.chcs)
+            {
+              if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
+              worklist.push_back(&hr);
+            }
+            multiHoudini(worklist);
+            
+            //no progress
+            if (equalCands(candidatesTmp)) {
+              break;
+            }
+            inferInv1(resultPrinted);
+          }
       }      
       // double check
       if (!resultPrinted) {
-	resultPrinted = true;
-	if (checkAllOver(true)) {
-	  return printCands();
-	} else {
-	  outs () << "unknown\n";
-	}
+        resultPrinted = true;
+        if (checkAllOver(true)) {
+          return printCands();
+        } else {
+          outs () << "unknown\n";
+        }
       }
     }
 
@@ -1296,33 +1289,33 @@ namespace ufo
     {
       hasArrays = true;
       for (auto & hr : ruleManager.chcs) {
-      	auto candidatesTmp = candidates;
-	for (bool fwd : {false, true}) {
-	  bool res = checkCHC(hr, candidates);
-	  if (!res) {
-	    if (fwd) {
-	      propagateCandidatesForward(hr);
-	      vector<HornRuleExt*> worklist;
-	      worklist.push_back(&hr);
-	      multiHoudini(worklist);	      
-	    } else {	      
-	      propagateCandidatesBackward(hr);
-	      filterUnsat();
-	      strengthen();
-	    }
-	    //no progress
-	    if (equalCands(candidatesTmp)) {
-	      break;
-	    }
-	    inferInv2();
-	  }
-	}
+        auto candidatesTmp = candidates;
+        for (bool fwd : {false, true}) {
+          bool res = checkCHC(hr, candidates);
+          if (!res) {
+            if (fwd) {
+              propagateCandidatesForward(hr);
+              vector<HornRuleExt*> worklist;
+              worklist.push_back(&hr);
+              multiHoudini(worklist);         
+            } else {          
+              propagateCandidatesBackward(hr);
+              filterUnsat();
+              strengthen();
+            }
+            //no progress
+            if (equalCands(candidatesTmp)) {
+              break;
+            }
+            inferInv2();
+          }
+        }
       }      
       // double check
       if (checkAllOver(true)) {
-	return printCands();
+        return printCands();
       } else {
-	outs () << "unknown\n";
+        outs () << "unknown\n";
       }
     }
 
@@ -1331,25 +1324,25 @@ namespace ufo
     void inferInv3()
     {
       for (auto & hr : ruleManager.chcs) {
-      	auto candidatesTmp = candidates;
-      	bool res = checkCHC(hr, candidates);
-      	  if (!res) {
-      	    declsVisited.clear();
-      	    declsVisited.insert(ruleManager.failDecl);
-      	    propagate(false);
-	    filterUnsat();
-	    strengthen();
-	    if (equalCands(candidatesTmp)) {
-	      break;
-	    }
-	    inferInv3(); //perhaps, this call is not required?
-	  }
+        auto candidatesTmp = candidates;
+        bool res = checkCHC(hr, candidates);
+          if (!res) {
+            declsVisited.clear();
+            declsVisited.insert(ruleManager.failDecl);
+            propagate(false);
+            filterUnsat();
+            strengthen();
+            if (equalCands(candidatesTmp)) {
+              break;
+            }
+            inferInv3(); //perhaps, this call is not required?
+          }
       }
       //double check
       if (checkAllOver(true)) {
-	return printCands();
+        return printCands();
       } else {
-	outs () << "unknown\n";
+        outs () << "unknown\n";
       }      
     }
     
