@@ -1078,14 +1078,17 @@ namespace ufo
       }
     }
 
-    void getIterators(HornRuleExt& hr, ExprVector& itrs)
+    void getIterators(HornRuleExt& hr, ExprVector& itrs, bool & incr)
     {
       for (int i = 0; i < hr.srcVars[0].size(); i++) {
 	Expr a = hr.srcVars[0][i];
 	Expr b = hr.dstVars[i];
 	if (containsOp<ARRAY_TY>(a) || containsOp<ARRAY_TY>(b)) continue;
-	if (u.implies(hr.body, mk<GT>(a,b)) ||
-	    u.implies(hr.body, mk<LT>(a,b))) {
+	if (u.implies(hr.body, mk<GT>(a,b))) {
+	  incr = false;
+	  itrs.push_back(a);
+	} else if (u.implies(hr.body, mk<LT>(a,b))) {
+	  incr = true;
 	  itrs.push_back(a);
 	}
       }
@@ -1112,7 +1115,7 @@ namespace ufo
 
     
     //perform range abduction
-    Expr getArrayFormula(HornRuleExt& hr, Expr dc, AbdType abd)
+    Expr getArrayFormula(HornRuleExt& hr, Expr dc, AbdType abd, ExprVector qVars, ExprVector itrVars)
     {
       Expr dstRel = hr.dstRelation;
       Expr srcRel = hr.srcRelations[0];
@@ -1121,11 +1124,6 @@ namespace ufo
       ExprVector dstVars(hr.dstVars.begin(), hr.dstVars.end());
       ExprVector srcInvVars(ruleManager.invVars[srcRel].begin(), ruleManager.invVars[srcRel].end());
       ExprVector dstInvVars(ruleManager.invVars[dstRel].begin(), ruleManager.invVars[dstRel].end());
-
-      ExprSet qVarsTmp;
-      getQuantifiedVars(dc, qVarsTmp);
-      ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
-      getIterators(hr, itrVars);
 
       ExprSet all, newCnd;
 
@@ -1172,12 +1170,15 @@ namespace ufo
       return replaceAll(conjoin(newCnd, m_efac), srcVars, srcInvVars);
     }
 
-    void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & rangeFormulas)
+    void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & rangeFormulas, bool incr)
     {
       for (auto a : qVars) {
 	for (auto b : itrVars) {
-	  rangeFormulas.push_back(mk<LT>(a,b));
-	  rangeFormulas.push_back(mk<GT>(a,b));
+	  if (incr) {
+	    rangeFormulas.push_back(mk<LT>(a,b));
+	  } else {
+	    rangeFormulas.push_back(mk<GT>(a,b));
+	  }
 	}
       }      
     }
@@ -1213,22 +1214,23 @@ namespace ufo
 	    continue;
 	  }
 
-	  Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL);
-	  Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK);
+	  ExprSet qVarsTmp;
+	  getQuantifiedVars(dcd, qVarsTmp);
+	  ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
+	  bool itrUp = true;
+	  getIterators(hr, itrVars, itrUp);
+
+	  Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars);
+	  Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars);
 
 	  // outs() << "AF1: " << *arrayFormula1 << "\n";
 	  // outs() << "AF2: " << *arrayFormula2 << "\n";
 	
-	  ExprSet qVarsTmp;
-	  getQuantifiedVars(dcd, qVarsTmp);
-	  ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
-	  getIterators(hr, itrVars);
-
-	
 	  ExprVector rangeFormulas;
-	  getRangeFormulas(qVars, itrVars, rangeFormulas);
-	
+	  getRangeFormulas(qVars, itrVars, rangeFormulas, itrUp);
+
 	  for (auto rf : rangeFormulas) {
+	    outs() << "RF: " << *rf << "\n";
 	    ExprVector args1;
 	    ExprVector args2;
 	    for (auto qVar : qVars) {
@@ -1259,6 +1261,8 @@ namespace ufo
 	    abduce(hr);	    
 	    filterUnsat();
 	    strengthen();
+	    outs() << "\nBefore\n";
+	    printCands(false,true);
 	    vector<HornRuleExt*> worklist;
 	    for (auto & hr : ruleManager.chcs)
 	    {
@@ -1266,7 +1270,9 @@ namespace ufo
 	      worklist.push_back(&hr);
 	    }
 	    multiHoudini(worklist);
-
+	    outs() << "\nAfter\n";
+	    printCands(false,true);
+	    
 	    //no progress
 	    if (equalCands(candidatesTmp)) {
 	      break;

@@ -177,7 +177,7 @@ namespace ufo
     /**
      * SMT-based formula equivalence check
      */
-    bool isEquiv(Expr a, Expr b)
+    boost::tribool isEquiv(Expr a, Expr b)
     {
       auto r1 = implies (a, b);
       if (!(bool)(r1)) return r1;
@@ -188,7 +188,7 @@ namespace ufo
     /**
      * SMT-based implication check
      */
-    bool implies (Expr a, Expr b)
+    boost::tribool implies (Expr a, Expr b)
     {
       if (a == b) return true;
       if (isOpX<TRUE>(b)) return true;
@@ -216,7 +216,7 @@ namespace ufo
     /**
      * Check if v has only one sat assignment in phi
      */
-    bool hasOneModel(Expr v, Expr phi) {
+    boost::tribool hasOneModel(Expr v, Expr phi) {
       if (isFalse(phi)) return false;
 
       getModelPtr();
