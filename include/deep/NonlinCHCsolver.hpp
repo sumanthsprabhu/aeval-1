@@ -45,6 +45,7 @@ namespace ufo
     bool debug = false;
     vector<int> propOrder;
     map<Expr, ExprVector> invItrs;
+    map<Expr, ExprVector> invSizeVars;
     map<Expr, bool> invItrInc;
 
     public:
@@ -1071,8 +1072,9 @@ namespace ufo
       for (auto & hr : ruleManager.chcs) {
         if (find(hr.srcRelations.begin(), hr.srcRelations.end(), hr.dstRelation) != hr.srcRelations.end()) {
           auto & itrs = invItrs[hr.dstRelation];
+          auto & sizeVars = invSizeVars[hr.dstRelation];
           auto & inc  = invItrInc[hr.dstRelation];
-          getIterators(hr, itrs, inc);
+          getIterators(hr, itrs, sizeVars, inc);
         }
       }
       return constructPropOrder();
@@ -1142,18 +1144,20 @@ namespace ufo
       }
     }
 
-    void getIterators(HornRuleExt& hr, ExprVector& itrs, bool & incr)
+    void getIterators(HornRuleExt& hr, ExprVector& itrs, ExprVector & sizeVars, bool & incr)
     {
       for (int i = 0; i < hr.srcVars[0].size(); i++) {
-        Expr a = hr.srcVars[0][i];
-        Expr b = hr.dstVars[i];
-        if (containsOp<ARRAY_TY>(a) || containsOp<ARRAY_TY>(b)) continue;
-        if (u.implies(hr.body, mk<GT>(a,b))) {
+        Expr sv = hr.srcVars[0][i];
+        Expr dv = hr.dstVars[i];
+        if (containsOp<ARRAY_TY>(sv) || containsOp<ARRAY_TY>(dv)) continue;
+        if (u.implies(hr.body, mk<GT>(sv,dv))) {
           incr = false;
-          itrs.push_back(a);
-        } else if (u.implies(hr.body, mk<LT>(a,b))) {
+          itrs.push_back(sv);
+        } else if (u.implies(hr.body, mk<LT>(sv,dv))) {
           incr = true;
-          itrs.push_back(a);
+          itrs.push_back(sv);
+        } else if (u.implies(hr.body, mk<EQ>(sv,dv))) {
+          sizeVars.push_back(sv);
         }
       }
     }
@@ -1234,14 +1238,21 @@ namespace ufo
       return replaceAll(conjoin(newCnd, m_efac), srcVars, srcInvVars);
     }
 
-    void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & rangeFormulas, bool incr)
+    void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & sizeVars, ExprVector & rangeFormulas, bool incr)
     {
-      for (auto a : qVars) {
-        for (auto b : itrVars) {
+      for (auto qv : qVars) {
+        for (auto iv : itrVars) {
           if (incr) {
-            rangeFormulas.push_back(mk<GEQ>(a,b));
+            rangeFormulas.push_back(mk<GEQ>(qv,iv));
           } else {
-            rangeFormulas.push_back(mk<LEQ>(a,b));
+            rangeFormulas.push_back(mk<LEQ>(qv,iv));
+          }
+        }
+        for (auto sv : sizeVars) {
+          if (incr) {
+            rangeFormulas.push_back(mk<GEQ>(qv,sv));
+          } else {
+            rangeFormulas.push_back(mk<GEQ>(qv,sv));
           }
         }
       }      
@@ -1287,31 +1298,33 @@ namespace ufo
           getQuantifiedVars(dcd, qVarsTmp);
           ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end());
           ExprVector & itrVars = invItrs[srcRel];
+          ExprVector & sizeVars = invSizeVars[srcRel];
           bool itrUp = invItrInc[srcRel];
 
-          Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars);
-          Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars);
-        
+          ExprVector arrayFormulas;
+          arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars));
+          arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars));
+          
           ExprVector rangeFormulas;
-          getRangeFormulas(qVars, itrVars, rangeFormulas, itrUp);
+          getRangeFormulas(qVars, itrVars, sizeVars, rangeFormulas, itrUp);
 
           // candidates[srcRel].clear();
           for (auto rf : rangeFormulas) {
-            ExprVector args1;
-            ExprVector args2;
+            ExprVector args;
             for (auto qVar : qVars) {
-              args1.push_back(qVar->left());
-              args2.push_back(qVar->left());
+              args.push_back(qVar->left());
             }
-            if (forall == true) {
-              args1.push_back(mk<OR>(arrayFormula1, mk<NEG>(rf)));
-              args2.push_back(mk<OR>(arrayFormula2, rf));
-              candidates[srcRel].insert(mk<AND>(mknary<FORALL>(args1), mknary<FORALL>(args2)));
-            } else if (forall == false) {
-              args1.push_back(mk<AND>(arrayFormula1, mk<NEG>(rf)));
-              args2.push_back(mk<AND>(arrayFormula2, rf));
-              candidates[srcRel].insert(mk<OR>(mknary<EXISTS>(args1), mknary<EXISTS>(args2)));
-            } 
+            for (auto af : arrayFormulas) {
+              for (auto rff : {rf, mk<NEG>(rf)}) {
+                args.push_back(mk<OR>(af, rff));
+                if (forall == true) {
+                  candidates[srcRel].insert(mknary<FORALL>(args));
+                } else if (forall == false) {
+                  candidates[srcRel].insert(mknary<EXISTS>(args));
+                }
+                args.pop_back();
+              }
+            }
           }
         }
       }
@@ -1345,6 +1358,7 @@ namespace ufo
       }
       
       // double check
+      filterUnsat();
       if (checkAllOver(true)) {
         return printCands();
       } else {
