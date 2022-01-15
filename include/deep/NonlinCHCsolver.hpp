@@ -43,6 +43,9 @@ namespace ufo
     int globalIter = 0;
     int strenBound;
     bool debug = false;
+    vector<int> propOrder;
+    map<Expr, ExprVector> invItrs;
+    map<Expr, bool> invItrInc;
 
     public:
 
@@ -207,10 +210,10 @@ namespace ufo
         }
       }
 
-      // outs() << "eTmp: " << *eTmp << "\n";
-      // for (auto v : varsToElim) {
-      //        outs() << "ev: " << *v << "\n";
-      // }
+      outs() << "eTmp: " << *eTmp << "\n";
+      for (auto v : varsToElim) {
+             outs() << "ev: " << *v << "\n";
+      }
       
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
       if (backward) eTmp = mkNeg(eTmp);
@@ -222,7 +225,7 @@ namespace ufo
       // ineqMerger(ineqETmp2, true);
       // eTmp = conjoin(ineqETmp2, m_efac);
       
-      // outs() << "eTmp: " << *eTmp << "\n";
+      outs() << "eTmp: " << *eTmp << "\n";
 
       ExprSet tmp;
 
@@ -1062,14 +1065,64 @@ namespace ufo
        REAL = 0,
        MOCK
       };
-    
-    //Simple initial candidate: formula present in query
-    void getInitialCandidates()
+
+    void initRangeAbduction()
     {
+      for (auto & hr : ruleManager.chcs) {
+        if (find(hr.srcRelations.begin(), hr.srcRelations.end(), hr.dstRelation) != hr.srcRelations.end()) {
+          auto & itrs = invItrs[hr.dstRelation];
+          auto & inc  = invItrInc[hr.dstRelation];
+          getIterators(hr, itrs, inc);
+        }
+      }
+      return constructPropOrder();
+    }
+      
+    
+    //Construct the order in which range abduction has to be performed
+    //BFS with fail decl as root; priority to chcs having the same relation in src and dst
+    void constructPropOrder()
+    {
+      ExprVector visited;
+      deque<int> q;      
+      for (auto chcNum : ruleManager.incms[ruleManager.failDecl]) {
+        q.push_back(chcNum);
+      }
+      visited.push_back(ruleManager.failDecl);
+      while (!q.empty()) {
+        int cur = q.front();
+        q.pop_front();
+        propOrder.push_back(cur);
+        for (auto sinv : ruleManager.chcs[cur].srcRelations) {
+          if (find(visited.begin(), visited.end(), sinv) != visited.end()) continue;          
+          vector<int> incms = ruleManager.incms[sinv];
+          for (auto incmsItr = incms.begin(); incmsItr != incms.end();) {
+            int i = *incmsItr;
+            if (find(ruleManager.chcs[i].srcRelations.begin(),
+                     ruleManager.chcs[i].srcRelations.end(),
+                     sinv) != ruleManager.chcs[i].srcRelations.end()) {
+              q.push_back(i);
+              incmsItr = incms.erase(incmsItr);
+            } else {
+              ++incmsItr;
+            }
+          }
+          for (auto i : incms) {
+            q.push_back(i);
+          }
+          visited.push_back(sinv);
+        }
+      }
+    }
+    
+    //Simple initial candidate: formula present in the query
+    void getQueryArrayCandidates()
+    {      
       for (auto & hr : ruleManager.chcs) {
         if (hr.isQuery) {
           assert(hr.srcRelations.size() == 1 &&
                  "Nonlinear CHCs are not supported");
+          //hr.body can have fail; following check avoids adding fail
           ExprSet cand;
           ExprSet cnjs;
           getConj(hr.body, cnjs);
@@ -1117,7 +1170,7 @@ namespace ufo
                                             qv,
                                             mk<SELECT>(hr.srcVars[0][i], qv))));
           }
-        } else {
+        } else if (!containsOp<ARRAY_TY>(hr.dstVars[i])) {
           dassign.insert(mk<EQ>(hr.dstVars[i], hr.srcVars[0][i]));
         }
       }
@@ -1172,10 +1225,10 @@ namespace ufo
         }
       }
 
-      // outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
-      // for (auto av : abdVars) {
-      //        outs() << "av: " << *av << "\n";
-      // }
+      outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
+      for (auto av : abdVars) {
+             outs() << "av: " << *av << "\n";
+      }
       
       preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
       return replaceAll(conjoin(newCnd, m_efac), srcVars, srcInvVars);
@@ -1197,8 +1250,13 @@ namespace ufo
     
     void abduce(HornRuleExt& hr)
     {
-      if (hr.isFact || hr.isQuery) return;
+      if (hr.isFact) return;
 
+      if (hr.isQuery) {
+        getQueryArrayCandidates();
+        return;
+      }
+        
       assert(hr.srcRelations.size() == 1 &&
              "Nonlinear CHCs are not supported");
 
@@ -1227,9 +1285,9 @@ namespace ufo
 
           ExprSet qVarsTmp;
           getQuantifiedVars(dcd, qVarsTmp);
-          ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end()), itrVars;
-          bool itrUp = true;
-          getIterators(hr, itrVars, itrUp);
+          ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end());
+          ExprVector & itrVars = invItrs[srcRel];
+          bool itrUp = invItrInc[srcRel];
 
           Expr arrayFormula1 = getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars);
           Expr arrayFormula2 = getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars);
@@ -1239,7 +1297,6 @@ namespace ufo
 
           // candidates[srcRel].clear();
           for (auto rf : rangeFormulas) {
-            outs() << "RF: " << *rf << "\n";
             ExprVector args1;
             ExprVector args2;
             for (auto qVar : qVars) {
@@ -1260,39 +1317,38 @@ namespace ufo
       }
     }
     
-    //Algorithm exactly like in the paper: only backward, single CHC propagation
-    void inferInv1(bool & resultPrinted)
-    {      
-      for (auto & hr : ruleManager.chcs) {
+    //Backward propagation from query
+    void inferInv1()
+    {
+      for (int i = 0; i < propOrder.size(); i++) {
+        auto & hr = ruleManager.chcs[propOrder[i]];
         auto candidatesTmp = candidates;
         bool res = checkCHC(hr, candidates);
-          if (!res) {
-            abduce(hr);     
-            filterUnsat();
-            printCands(false, true);
-            vector<HornRuleExt*> worklist;
-            for (auto & hr : ruleManager.chcs)
-            {
-              if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
-              worklist.push_back(&hr);
-            }
-            multiHoudini(worklist);
-            printCands(false, true);
-            //no progress
-            if (equalCands(candidatesTmp)) {
-              break;
-            }
-            inferInv1(resultPrinted);
+        if (!res) {
+          abduce(hr);     
+          filterUnsat();
+          printCands(false, true);
+          
+          vector<HornRuleExt*> worklist;
+          for (int j = 0; j <= i; j++) {
+            auto &hr2 = ruleManager.chcs[propOrder[j]];
+            worklist.push_back(&hr2);
           }
-      }      
-      // double check
-      if (!resultPrinted) {
-        resultPrinted = true;
-        if (checkAllOver(true)) {
-          return printCands();
-        } else {
-          outs () << "unknown\n";
+          multiHoudini(worklist);
+          printCands(false, true);
+          
+          //no progress
+          if (equalCands(candidatesTmp)) {
+            break;
+          }
         }
+      }
+      
+      // double check
+      if (checkAllOver(true)) {
+        return printCands();
+      } else {
+        outs () << "unknown\n";
       }
     }
 
@@ -1508,9 +1564,8 @@ namespace ufo
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv == 0) {
-      nonlin.getInitialCandidates();
-      bool rp = false;
-      nonlin.inferInv1(rp);
+      nonlin.initRangeAbduction();
+      nonlin.inferInv1();
     } else
       nonlin.solveIncrementally(inv);
   };
