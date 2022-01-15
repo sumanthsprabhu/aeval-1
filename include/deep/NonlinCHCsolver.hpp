@@ -1070,7 +1070,18 @@ namespace ufo
         if (hr.isQuery) {
           assert(hr.srcRelations.size() == 1 &&
                  "Nonlinear CHCs are not supported");
-          Expr c = mkNeg(hr.body);
+          ExprSet cand;
+          ExprSet cnjs;
+          getConj(hr.body, cnjs);
+          ExprVector allVars = hr.locVars;
+          for (auto & a : hr.srcVars) allVars.insert(allVars.end(), a.begin(), a.end());
+          for (auto & a : cnjs)
+          {
+            if (!emptyIntersect(a, allVars)) {
+              cand.insert(mkNeg(a));
+            }
+          }
+          Expr c = disjoin(cand, m_efac);
           c = replaceAll(c, hr.srcVars[0], ruleManager.invVars[hr.srcRelations[0]]);
           candidates[hr.srcRelations[0]].insert(c);
           return;
@@ -1258,6 +1269,7 @@ namespace ufo
           if (!res) {
             abduce(hr);     
             filterUnsat();
+            printCands(false, true);
             vector<HornRuleExt*> worklist;
             for (auto & hr : ruleManager.chcs)
             {
@@ -1265,7 +1277,7 @@ namespace ufo
               worklist.push_back(&hr);
             }
             multiHoudini(worklist);
-            
+            printCands(false, true);
             //no progress
             if (equalCands(candidatesTmp)) {
               break;
