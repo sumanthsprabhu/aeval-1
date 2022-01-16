@@ -211,10 +211,10 @@ namespace ufo
         }
       }
 
-      outs() << "eTmp: " << *eTmp << "\n";
-      for (auto v : varsToElim) {
-             outs() << "ev: " << *v << "\n";
-      }
+      // outs() << "eTmp: " << *eTmp << "\n";
+      // for (auto v : varsToElim) {
+      //        outs() << "ev: " << *v << "\n";
+      // }
       
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
       if (backward) eTmp = mkNeg(eTmp);
@@ -226,7 +226,7 @@ namespace ufo
       // ineqMerger(ineqETmp2, true);
       // eTmp = conjoin(ineqETmp2, m_efac);
       
-      outs() << "eTmp: " << *eTmp << "\n";
+      // outs() << "eTmp: " << *eTmp << "\n";
 
       ExprSet tmp;
 
@@ -1273,10 +1273,10 @@ namespace ufo
         }
       }
 
-      outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
-      for (auto av : abdVars) {
-             outs() << "av: " << *av << "\n";
-      }
+      // outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
+      // for (auto av : abdVars) {
+      //        outs() << "av: " << *av << "\n";
+      // }
       
       preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
       return replaceAll(conjoin(newCnd, m_efac), srcVars, srcInvVars);
@@ -1379,7 +1379,7 @@ namespace ufo
                 rf = mk<LEQ>(qv,iv);
               }
 
-              outs() << "RF: " << *rf << "\n";
+              // outs() << "RF: " << *rf << "\n";
               ExprVector args1 = {qv->left()};
               ExprVector args2 = args1;
               if (forall == true)
@@ -1484,12 +1484,17 @@ namespace ufo
 
             outs() << "RF: " << *rf << "\n";
 
+            auto candidatesTmp = candidates;
             if (forall == true)
             {
               dcd = replaceAll(dcd, dcd->last(), mk<OR>(rf, dcd->last()));
-              candidates[srcRel].insert(dcd);
             } else if (forall == false) {
-              // GF: to implement
+              dcd = replaceAll(dcd, dcd->last(), mk<AND>(rf, dcd->last()));
+            }
+            
+            candidatesTmp[srcRel].insert(dcd);
+            if (checkCHC(hr, candidatesTmp)) {
+              candidates[srcRel].insert(dcd);
             }
           }
         }
@@ -1508,16 +1513,13 @@ namespace ufo
           newWeaken(hr);
         } else {
           abduce(hr);     
-          filterUnsat();
-          printCands(false, true);
-          
+          filterUnsat();          
           vector<HornRuleExt*> worklist;
           for (int j = 0; j <= i; j++) {
             auto &hr2 = ruleManager.chcs[propOrder[j]];
             worklist.push_back(&hr2);
           }
           multiHoudini(worklist);
-          printCands(false, true);
           
           //no progress
           if (equalCands(candidatesTmp)) {
