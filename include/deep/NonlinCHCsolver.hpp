@@ -54,6 +54,7 @@ namespace ufo
 
     bool checkAllOver (bool checkQuery = false)
     {
+      outs () << " checkAllOver\n";
       for (auto & hr : ruleManager.chcs)
       {
         if (hr.isQuery && !checkQuery) continue;
@@ -64,12 +65,14 @@ namespace ufo
 
     bool checkCHC (HornRuleExt& hr, map<Expr, ExprSet>& annotations)
     {
+      outs () << " check chc: ";
       ExprSet checkList;
       checkList.insert(hr.body);
       Expr rel;
       for (int i = 0; i < hr.srcRelations.size(); i++)
       {
         Expr rel = hr.srcRelations[i];
+        outs () << rel << " ";
         ExprSet lms = annotations[rel];
         Expr overBody = replaceAll(conjoin(lms, m_efac), ruleManager.invVars[rel], hr.srcVars[i]);
         getConj(overBody, checkList);
@@ -77,10 +80,15 @@ namespace ufo
       if (!hr.isQuery)
       {
         rel = hr.dstRelation;
+        outs () << " -> " << rel << "\n";
         ExprSet negged;
         ExprSet lms = annotations[rel];
         for (auto a : lms) negged.insert(mkNeg(replaceAll(a, ruleManager.invVars[rel], hr.dstVars)));
         checkList.insert(disjoin(negged, m_efac));
+      }
+      else
+      {
+        outs () << " -> false\n";
       }
       return bool(!u.isSat(checkList));
     }
@@ -115,7 +123,7 @@ namespace ufo
     {
       if (!u.isSat(e)) return;
       if (!containsOp<FORALL>(e) && !containsOp<EXISTS>(e)) e = rewriteSelectStore(e);
-      
+
       ExprSet qVars, varsToElim, complex;
       ExprMap repls, replsRev;
       map<Expr, ExprSet> replIngr;
@@ -137,16 +145,16 @@ namespace ufo
         replIngr[repl] = tmp;
       }
       Expr eTmp = replaceAll(e, repls);
-      eTmp = replaceQVars(eTmp, repls);
+      // eTmp = replaceQVars(eTmp, repls);
       if (backward && (containsOp<FORALL>(e) || containsOp<EXISTS>(e)))
       {
         eTmp = replaceAll (eTmp, replsRev);
         eTmp = simplifyQuants(eTmp);
-        eTmp = simplifyExists(eTmp);
+        // eTmp = simplifyExists(eTmp);
         eTmp = u.removeRedundantConjuncts(eTmp);
         eTmp = simplifyBool(eTmp);
         eTmp = u.extendQuantified(eTmp);
-        eTmp = moveInsideQuantifiers(eTmp);
+        // eTmp = moveInsideQuantifiers(eTmp);
         map<Expr, ExprVector> qv;
         getQVars (eTmp, qv);
 
@@ -175,7 +183,10 @@ namespace ufo
                 tmpm.insert(p);
 
             if (isNumeric(v))
-              epCnjs.insert(eliminateQuantifiers(conjoin(tmpm, m_efac), v));
+            {
+              ExprSet tmp = {v};
+              epCnjs.insert(eliminateQuantifiers(conjoin(tmpm, m_efac), tmp));
+            }
           }
 
           Expr toReplace = conjoin(epCnjs, m_efac);
@@ -184,7 +195,7 @@ namespace ufo
           else
             eTmp = replaceAll(eTmp, q->last(), toReplace);   // TODO: multiple things
         }
-        eTmp = moveInsideQuantifiers(eTmp);
+        // eTmp = moveInsideQuantifiers(eTmp);
       }
       else
       {
@@ -211,22 +222,16 @@ namespace ufo
         }
       }
 
-      // outs() << "eTmp: " << *eTmp << "\n";
-      // for (auto v : varsToElim) {
-      //        outs() << "ev: " << *v << "\n";
-      // }
+      outs() << "eTmp: ";
+      pprint(eTmp);
+      outs() << "\nto elim: ";
+      pprint(varsToElim);
+      outs () << "\n";
       
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
+      outs () << "  res = " << eTmp << "\n";
       if (backward) eTmp = mkNeg(eTmp);
       eTmp = simplifyBool(simplifyArithm(eTmp, false, true));
-      // ExprSet ineqETmp1, ineqETmp2;
-      // ineqETmp1.insert(eTmp);
-      // shrinkCnjs(ineqETmp1);
-      // getConj(conjoin(ineqETmp1, m_efac), ineqETmp2);
-      // ineqMerger(ineqETmp2, true);
-      // eTmp = conjoin(ineqETmp2, m_efac);
-      
-      // outs() << "eTmp: " << *eTmp << "\n";
 
       ExprSet tmp;
 
@@ -238,7 +243,7 @@ namespace ufo
       for (auto g : tmp)
       {
         g = replaceAll (g, replsRev);
-        g = simplifyBool(simplifyExists(simplifyQuants(g)));
+        // g = simplifyBool(simplifyExists(simplifyQuants(g)));
         if (!varsToRename.empty())
           g = replaceAll(g, varsToKeep, varsToRename);
         guesses.insert(g);
@@ -732,8 +737,8 @@ namespace ufo
       for (auto & a : prev) getConj (a, prevSplit);
       for (auto & a : next) getConj (a, nextSplit);
 
-      mergeDiseqs(prevSplit);
-      mergeDiseqs(nextSplit);
+      // mergeDiseqs(prevSplit);
+      // mergeDiseqs(nextSplit);
 
       if (prevSplit.size() != 1 || nextSplit.size() != 1)
         return; // GF: to extend
@@ -984,6 +989,8 @@ namespace ufo
     // adapted from RndLearnerV3
     bool multiHoudini(vector<HornRuleExt*>& worklist, bool recur = true)
     {
+      outs () << "multihoudini, size " << worklist.size() << "\n";
+
       if (!anyProgress(worklist)) return false;
       auto candidatesTmp = candidates;
       bool res1 = true;
@@ -992,7 +999,11 @@ namespace ufo
       {
         if (hr->isQuery) continue;
 
-        if (!checkCHC(*hr, candidatesTmp))
+        if (checkCHC(*hr, candidatesTmp))
+        {
+          outs () << "all good\n";
+        }
+        else
         {
           res3 = false;
           bool res2;
@@ -1011,6 +1022,7 @@ namespace ufo
           }
           else
           {
+           outs () << "weaken\n";
             Expr newCand = NULL;
             for (auto it = candidatesTmp[dstRel].begin(); it != candidatesTmp[dstRel].end(); )
             {
@@ -1079,14 +1091,14 @@ namespace ufo
       }
       return constructPropOrder();
     }
-      
-    
+
+
     //Construct the order in which range abduction has to be performed
     //BFS with fail decl as root; priority to chcs having the same relation in src and dst
     void constructPropOrder()
     {
       ExprVector visited;
-      deque<int> q;      
+      deque<int> q;
       for (auto chcNum : ruleManager.incms[ruleManager.failDecl]) {
         q.push_back(chcNum);
       }
@@ -1096,7 +1108,7 @@ namespace ufo
         q.pop_front();
         propOrder.push_back(cur);
         for (auto sinv : ruleManager.chcs[cur].srcRelations) {
-          if (find(visited.begin(), visited.end(), sinv) != visited.end()) continue;          
+          if (find(visited.begin(), visited.end(), sinv) != visited.end()) continue;
           vector<int> incms = ruleManager.incms[sinv];
           for (auto incmsItr = incms.begin(); incmsItr != incms.end();) {
             int i = *incmsItr;
@@ -1116,10 +1128,10 @@ namespace ufo
         }
       }
     }
-    
+
     //Simple initial candidate: formula present in the query
     void getQueryArrayCandidates()
-    {      
+    {
       for (auto & hr : ruleManager.chcs) {
         if (hr.isQuery) {
           assert(hr.srcRelations.size() == 1 &&
@@ -1178,6 +1190,8 @@ namespace ufo
           dassign.insert(mk<EQ>(hr.dstVars[i], hr.srcVars[0][i]));
         }
       }
+      outs () << "   mock:  ";
+      pprint(dassign, 3);
       return conjoin(dassign, m_efac);
     }
 
@@ -1220,10 +1234,6 @@ namespace ufo
 
       ExprVector all;
       ExprSet newCnd;
-
-      // all.insert(replaceAll(conjoin(candidates[srcRel], m_efac),
-      //                            srcInvVars,
-      //                            srcVars));
       
       if (isOpX<FORALL>(dc) || isOpX<EXISTS>(dc)) {     
         all.push_back(mkNeg(replaceAll(dc->last(), dstInvVars, dstVars)));
@@ -1232,54 +1242,59 @@ namespace ufo
         return mk<TRUE>(m_efac);
       }
 
-      //old mock
-      // if (abd == AbdType::REAL) {
-      //   ExprSet nbody, nbodyTmp;
-      //   getConj(hr.body, nbodyTmp);
-      //   for (auto nbt : nbodyTmp) {
-      //     if (containsOp<ARRAY_TY>(nbt)) {
-      //       nbody.insert(replaceAll(nbt, itrVars, qVars));
-      //     } else {
-      //       nbody.insert(nbt);
-      //     }
-      //   }       
-      //   all.insert(conjoin(nbody, m_efac));
-      // } else {
-      //   Expr mbody = getMockArrayAssign(hr, qVars);
-      //   all.insert(mbody);
-      // }
-      
-      ExprSet nbody, nbodyTmp;
-      getConj(hr.body, nbodyTmp);
-      for (auto nbt : nbodyTmp) {
-        if (containsOp<ARRAY_TY>(nbt)){
-          if (abd == AbdType::REAL) {
-            nbt = replaceAll(nbt, itrVars, qVars);
-            nbt = rewriteSelectStore(nbt);
-            all.push_back(nbt);
-          } else {
-            all.push_back(getMockArrayAssignNew(nbt, qVars));
+      ExprVector vars2keep, prjcts, res;
+      u.flatten(hr.body, prjcts, false, vars2keep, [](Expr a, ExprVector& b){return a;});
+      for (auto b : prjcts)
+      {
+        ExprSet nbody, nbodyTmp;
+        getConj(b, nbodyTmp);
+        for (auto nbt : nbodyTmp)
+        {
+          outs () << "    >>> nbt " << nbt << "\n";
+          if (containsOp<ARRAY_TY>(nbt)) {
+            if (abd == AbdType::REAL) {
+              nbt = replaceAll(nbt, itrVars, qVars);
+              nbt = rewriteSelectStore(nbt);
+              all.push_back(nbt);
+            }
+            else if (isOpX<EQ>(nbt) && isOpX<ARRAY_TY>(typeOf(nbt->left())))
+            {
+              Expr srcVar = NULL, dstVar = NULL;
+              if (isOpX<FAPP>(nbt->left()))
+                srcVar = nbt->left();
+              if (isOpX<FAPP>(nbt->right()))
+                dstVar = nbt->right();
+              if (isOpX<STORE>(nbt->left()) && isOpX<FAPP>(nbt->left()->left()))
+                srcVar = nbt->left()->left();
+              if (isOpX<STORE>(nbt->right()) && isOpX<FAPP>(nbt->right()->left()))
+                dstVar = nbt->right()->left();
+              if (isOpX<STORE>(nbt->left()) && isOpX<STORE>(nbt->left()->left()) && isOpX<FAPP>(nbt->left()->left()->left()))
+                srcVar = nbt->left()->left()->left();
+              if (isOpX<STORE>(nbt->right()) && isOpX<STORE>(nbt->right()->left()) && isOpX<FAPP>(nbt->right()->left()->left()))
+                dstVar = nbt->right()->left()->left();
+              // TODO: extend for the case of nested STORE-s
+              if (srcVar != NULL && dstVar != NULL)
+                for (auto & q : qVars)
+                  all.push_back(mk<EQ>(mk<SELECT>(srcVar, q),
+                                       mk<SELECT>(dstVar, q)));
+              else assert(0 && "not implemented");
+            }
           }
-        } else {
-          all.push_back(nbt);
+          else all.push_back(nbt);
+          outs () << "      ----> " << all.back() << "\n";
         }
+        ExprVector abdVars(qVars.begin(), qVars.end());
+        for (auto sv : srcVars) {
+          if (find(itrVars.begin(), itrVars.end(), sv) == itrVars.end()) {
+            abdVars.push_back(sv);
+          }
+        }
+        Expr newCnd = keepQuantifiersRepl(conjoin(all, m_efac), abdVars);
+        res.push_back(mkNeg(newCnd));
       }
       
-
-      ExprVector abdVars(qVars.begin(), qVars.end());
-      for (auto sv : srcVars) {
-        if (find(itrVars.begin(), itrVars.end(), sv) == itrVars.end()) {
-          abdVars.push_back(sv);
-        }
-      }
-
-      // outs() << "ALL: " << *(conjoin(all,m_efac)) << "\n";
-      // for (auto av : abdVars) {
-      //        outs() << "av: " << *av << "\n";
-      // }
-      
-      preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
-      return replaceAll(conjoin(newCnd, m_efac), srcVars, srcInvVars);
+      //preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
+      return replaceAll(conjoin(res, m_efac), srcVars, srcInvVars);
     }
 
     void getRangeFormulas(const ExprVector & qVars, const ExprVector & itrVars, ExprVector & sizeVars, ExprVector & rangeFormulas, bool incr)
@@ -1292,13 +1307,13 @@ namespace ufo
             rangeFormulas.push_back(mk<LEQ>(qv,iv));
           }
         }
-        for (auto sv : sizeVars) {
-          if (incr) {
-            rangeFormulas.push_back(mk<GEQ>(qv,sv));
-          } else {
-            rangeFormulas.push_back(mk<LEQ>(qv,sv));
-          }
-        }
+        // for (auto sv : sizeVars) {
+        //   if (incr) {
+        //     rangeFormulas.push_back(mk<GEQ>(qv,sv));
+        //   } else {
+        //     rangeFormulas.push_back(mk<LEQ>(qv,sv));
+        //   }
+        // }
       }      
     }
 
@@ -1337,6 +1352,8 @@ namespace ufo
             //TODO: handle non quantified case
             continue;
           }
+          
+          outs () << ">>>>>>>>>>>>>> next cand: "<< dcd<<"\n";
 
           ExprSet qVarsTmp;
           getQuantifiedVars(dcd, qVarsTmp);
@@ -1348,28 +1365,7 @@ namespace ufo
           ExprVector arrayFormulas;
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars));
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars));
-          
-          ExprVector rangeFormulas;
-          getRangeFormulas(qVars, itrVars, sizeVars, rangeFormulas, itrUp);
-
-          // for (auto rf : rangeFormulas) {
-          //   ExprVector args;
-          //   for (auto qVar : qVars) {
-          //     args.push_back(qVar->left());
-          //   }
-          //   for (auto af : arrayFormulas) {
-          //     for (auto rff : {rf, mk<NEG>(rf)}) {
-          //       args.push_back(mk<OR>(af, rff));
-          //       if (forall == true) {
-          //         candidates[srcRel].insert(mknary<FORALL>(args));
-          //       } else if (forall == false) {
-          //         candidates[srcRel].insert(mknary<EXISTS>(args));
-          //       }
-          //       args.pop_back();
-          //     }
-          //   }
-          // }
-          
+                    
           for (auto qv : qVars) {
             for (auto iv : itrVars) {
               Expr rf;
@@ -1379,7 +1375,7 @@ namespace ufo
                 rf = mk<LEQ>(qv,iv);
               }
 
-              // outs() << "RF: " << *rf << "\n";
+              outs() << "RF: " << *rf << "\n";
               ExprVector args1 = {qv->left()};
               ExprVector args2 = args1;
               if (forall == true)
@@ -1507,13 +1503,29 @@ namespace ufo
     {
       for (int i = 0; i < propOrder.size(); i++) {
         auto & hr = ruleManager.chcs[propOrder[i]];
+        outs () << "\n\n\n===============\ninferInv1 for chc:  " <<
+          (hr.srcRelations.empty() ? "" : lexical_cast<string>(hr.srcRelations[0]))
+                << " -> " << hr.dstRelation << "\n";
+
         auto candidatesTmp = candidates;
+        if (!hr.srcRelations.empty())
+        {
+          outs () << "cands [src]:  \n";
+          pprint(candidates[hr.srcRelations[0]], 2);
+          if (hr.srcRelations[0] != hr.dstRelation)
+          {
+            outs () << "cands [dst]:  \n";
+            pprint(candidates[hr.dstRelation], 2);
+          }
+        }
+
         bool res = checkCHC(hr, candidates);
         if (res) {
+          outs () << "   failed\n";
           newWeaken(hr);
         } else {
           abduce(hr);     
-          filterUnsat();          
+          // filterUnsat();          
           vector<HornRuleExt*> worklist;
           for (int j = 0; j <= i; j++) {
             auto &hr2 = ruleManager.chcs[propOrder[j]];
@@ -1550,8 +1562,8 @@ namespace ufo
               propagateCandidatesForward(hr);
               vector<HornRuleExt*> worklist;
               worklist.push_back(&hr);
-              multiHoudini(worklist);         
-            } else {          
+              multiHoudini(worklist);
+            } else {
               propagateCandidatesBackward(hr);
               filterUnsat();
               strengthen();
@@ -1563,7 +1575,7 @@ namespace ufo
             inferInv2();
           }
         }
-      }      
+      }
       // double check
       if (checkAllOver(true)) {
         return printCands();
@@ -1572,7 +1584,7 @@ namespace ufo
       }
     }
 
-        
+
     //backward, multiple CHC propagation
     void inferInv3()
     {
@@ -1596,10 +1608,10 @@ namespace ufo
         return printCands();
       } else {
         outs () << "unknown\n";
-      }      
+      }
     }
-    
-    //Backward and forward, multiple CHC propagation      
+
+    //Backward and forward, multiple CHC propagation
     void guessAndSolve()
     {
       vector<HornRuleExt*> worklist;

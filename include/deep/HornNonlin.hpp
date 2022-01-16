@@ -288,9 +288,9 @@ namespace ufo
             origDstSymbs.push_back(*it);
         }
         allOrigSymbs.insert(allOrigSymbs.end(), origDstSymbs.begin(), origDstSymbs.end());
-	simplBoolReplCnj(allOrigSymbs, lin);
+	      // simplBoolReplCnj(allOrigSymbs, lin);
         hr.body = conjoin(lin, m_efac);
-
+outs () << "hr.body = " << hr.body << "\n";
         vector<ExprVector> tmp;
         // we may have several applications of the same predicate symbol in the body:
         for (int i = 0; i < hr.srcRelations.size(); i++)
@@ -317,9 +317,9 @@ namespace ufo
         }
         hr.assignVarsAndRewrite (origSrcSymbs, tmp,
                                  origDstSymbs, invVars[hr.dstRelation]);
-        hr.body = u.removeITE(unfoldITE(hr.body));
-        hr.body = eliminateQuantifiers(hr.body, hr.locVars, true);
-
+        // hr.body = u.removeITE(unfoldITE(hr.body));
+        hr.body = eliminateQuantifiers(hr.body, hr.locVars, true, false);
+        outs () << "hr.body = " << hr.body << "\n";
         // GF: ideally, hr.locVars should be empty after QE,
         // but the QE procedure is imperfect, so
         ExprVector body_vars;
@@ -338,7 +338,7 @@ namespace ufo
           args.push_back(hr.body);
           Expr tmp = hr.body;
           hr.body = mknary<EXISTS>(args);
-          hr.body = simplifyExists(hr.body);
+          // hr.body = simplifyExists(hr.body);
         }
       }
 

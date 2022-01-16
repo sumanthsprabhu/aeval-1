@@ -15,6 +15,6 @@
   (= i1 (+ i 1))) (inv a1 b i1 n)))
 
 (rule (=> (and (inv a b i n) (not (< i n))
-    (>= i1 0) (< i1 n)) (not (>= (select a i1) 0)) fail))
+    (>= i1 0) (< i1 n) (not (>= (select a i1) 0))) fail))
 
 (query fail)
