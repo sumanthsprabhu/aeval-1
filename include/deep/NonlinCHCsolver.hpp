@@ -227,7 +227,7 @@ namespace ufo
       outs() << "\nto elim: ";
       pprint(varsToElim);
       outs () << "\n";
-      
+
       eTmp = eliminateQuantifiers(eTmp, varsToElim);
       outs () << "  res = " << eTmp << "\n";
       if (backward) eTmp = mkNeg(eTmp);
@@ -1031,10 +1031,10 @@ namespace ufo
 
               if (!u.isSat(model, repl)) {
                 res2 = false;
-                if (isOpX<FORALL>(repl))
-                  newCand = weakenForall(*it, ruleManager.invVars[dstRel], hr->dstVars, model);
-                else if (containsOp<EXISTS>(repl) && hr->isInductive)
-                  newCand = strengthenExists(*it, modelSrc);
+                // if (isOpX<FORALL>(repl))
+                //   newCand = weakenForall(*it, ruleManager.invVars[dstRel], hr->dstVars, model);
+                // else if (containsOp<EXISTS>(repl) && hr->isInductive)
+                //   newCand = strengthenExists(*it, modelSrc);
                 it = candidatesTmp[dstRel].erase(it);
               }
               else ++it;
@@ -1220,7 +1220,7 @@ namespace ufo
 
       return conjoin(returnCnj, m_efac);
     }
-    
+
     //perform range abduction
     Expr getArrayFormula(HornRuleExt& hr, Expr dc, AbdType abd, ExprVector qVars, ExprVector itrVars)
     {
@@ -1232,52 +1232,50 @@ namespace ufo
       ExprVector srcInvVars(ruleManager.invVars[srcRel].begin(), ruleManager.invVars[srcRel].end());
       ExprVector dstInvVars(ruleManager.invVars[dstRel].begin(), ruleManager.invVars[dstRel].end());
 
-      ExprVector all;
-      ExprSet newCnd;
-      
-      if (isOpX<FORALL>(dc) || isOpX<EXISTS>(dc)) {     
-        all.push_back(mkNeg(replaceAll(dc->last(), dstInvVars, dstVars)));
-      } else {
-        //TODO: handle unquantified
-        return mk<TRUE>(m_efac);
-      }
-
-      ExprVector vars2keep, prjcts, res;
+      ExprVector vars2keep, prjcts, cellFls, res;
       u.flatten(hr.body, prjcts, false, vars2keep, [](Expr a, ExprVector& b){return a;});
       for (auto b : prjcts)
       {
-        ExprSet nbody, nbodyTmp;
+        ExprVector all = {mkNeg(replaceAll(dc->last(), dstInvVars, dstVars))};
+        ExprSet nbodyTmp;
         getConj(b, nbodyTmp);
         for (auto nbt : nbodyTmp)
         {
           outs () << "    >>> nbt " << nbt << "\n";
           if (containsOp<ARRAY_TY>(nbt)) {
             if (abd == AbdType::REAL) {
-              nbt = replaceAll(nbt, itrVars, qVars);
-              nbt = rewriteSelectStore(nbt);
+              if (containsOp<STORE>(nbt))
+              {
+                nbt = replaceAll(nbt, itrVars, qVars);
+                nbt = rewriteSelectStore(nbt);
+              }
               all.push_back(nbt);
             }
-            else if (isOpX<EQ>(nbt) && isOpX<ARRAY_TY>(typeOf(nbt->left())))
+            else
             {
-              Expr srcVar = NULL, dstVar = NULL;
-              if (isOpX<FAPP>(nbt->left()))
-                srcVar = nbt->left();
-              if (isOpX<FAPP>(nbt->right()))
-                dstVar = nbt->right();
-              if (isOpX<STORE>(nbt->left()) && isOpX<FAPP>(nbt->left()->left()))
-                srcVar = nbt->left()->left();
-              if (isOpX<STORE>(nbt->right()) && isOpX<FAPP>(nbt->right()->left()))
-                dstVar = nbt->right()->left();
-              if (isOpX<STORE>(nbt->left()) && isOpX<STORE>(nbt->left()->left()) && isOpX<FAPP>(nbt->left()->left()->left()))
-                srcVar = nbt->left()->left()->left();
-              if (isOpX<STORE>(nbt->right()) && isOpX<STORE>(nbt->right()->left()) && isOpX<FAPP>(nbt->right()->left()->left()))
-                dstVar = nbt->right()->left()->left();
-              // TODO: extend for the case of nested STORE-s
-              if (srcVar != NULL && dstVar != NULL)
-                for (auto & q : qVars)
-                  all.push_back(mk<EQ>(mk<SELECT>(srcVar, q),
-                                       mk<SELECT>(dstVar, q)));
-              else assert(0 && "not implemented");
+              if (isOpX<EQ>(nbt) && isOpX<ARRAY_TY>(typeOf(nbt->left())))
+              {
+                Expr srcVar = NULL, dstVar = NULL;
+                if (isOpX<FAPP>(nbt->left()))
+                  srcVar = nbt->left();
+                if (isOpX<FAPP>(nbt->right()))
+                  dstVar = nbt->right();
+                if (isOpX<STORE>(nbt->left()) && isOpX<FAPP>(nbt->left()->left()))
+                  srcVar = nbt->left()->left();
+                if (isOpX<STORE>(nbt->right()) && isOpX<FAPP>(nbt->right()->left()))
+                  dstVar = nbt->right()->left();
+                if (isOpX<STORE>(nbt->left()) && isOpX<STORE>(nbt->left()->left()) && isOpX<FAPP>(nbt->left()->left()->left()))
+                  srcVar = nbt->left()->left()->left();
+                if (isOpX<STORE>(nbt->right()) && isOpX<STORE>(nbt->right()->left()) && isOpX<FAPP>(nbt->right()->left()->left()))
+                  dstVar = nbt->right()->left()->left();
+                // TODO: extend for the case of nested STORE-s
+                if (srcVar != NULL && dstVar != NULL)
+                  for (auto & q : qVars)
+                    all.push_back(mk<EQ>(mk<SELECT>(srcVar, q),
+                                         mk<SELECT>(dstVar, q)));
+                else assert(0 && "not implemented");
+              }
+              else all.push_back(nbt);
             }
           }
           else all.push_back(nbt);
@@ -1289,11 +1287,18 @@ namespace ufo
             abdVars.push_back(sv);
           }
         }
+
         Expr newCnd = keepQuantifiersRepl(conjoin(all, m_efac), abdVars);
         res.push_back(mkNeg(newCnd));
+
+        ExprSet dsjs;   // GF: to improve the identification of cell properties
+        getDisj(res.back(), dsjs);    // maybe outside of this procedure
+        for (auto & a : dsjs) if (containsOp<SELECT>(a)) cellFls.push_back(a);
       }
-      
-      //preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);      
+
+      if (false == u.isSat(cellFls))
+        return mk<FALSE>(m_efac);
+      //preproGuessing(conjoin(all, m_efac), abdVars, abdVars, newCnd, true, false);
       return replaceAll(conjoin(res, m_efac), srcVars, srcInvVars);
     }
 
@@ -1314,10 +1319,9 @@ namespace ufo
         //     rangeFormulas.push_back(mk<LEQ>(qv,sv));
         //   }
         // }
-      }      
+      }
     }
 
-    
     void abduce(HornRuleExt& hr)
     {
       if (hr.isFact) return;
@@ -1326,22 +1330,22 @@ namespace ufo
         getQueryArrayCandidates();
         return;
       }
-        
+
       assert(hr.srcRelations.size() == 1 &&
              "Nonlinear CHCs are not supported");
 
       Expr dstRel = hr.dstRelation;
       Expr srcRel = hr.srcRelations[0];
 
-      ExprSet dstCands;      
+      ExprSet dstCands;
       for (auto c : candidates[dstRel]) {
         dstCands.insert(simplifyBool(simplifyArithm(c)));
       }
-      
+
       for (auto dc : dstCands) {
         ExprSet dcDisjs;
         getDisj(dc, dcDisjs);
-        
+
         for (auto dcd : dcDisjs) {
           boost::tribool forall(boost::indeterminate);
           if (isOpX<FORALL>(dcd)) {
@@ -1352,7 +1356,7 @@ namespace ufo
             //TODO: handle non quantified case
             continue;
           }
-          
+
           outs () << ">>>>>>>>>>>>>> next cand: "<< dcd<<"\n";
 
           ExprSet qVarsTmp;
@@ -1364,8 +1368,14 @@ namespace ufo
 
           ExprVector arrayFormulas;
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars));
+
+          if (isOpX<FALSE>(arrayFormulas[0]))
+          {
+            outs () << "vacuous\n"; // GF: to test better
+            exit(0);
+          }
+
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars));
-                    
           for (auto qv : qVars) {
             for (auto iv : itrVars) {
               Expr rf;
@@ -1405,8 +1415,8 @@ namespace ufo
               } else if (forall == false) {
                 if (hr.isInductive)
                 {
-                  args1.push_back(mk<AND>(arrayFormulas[0], mk<NEG>(rf)));
-                  args2.push_back(mk<AND>(arrayFormulas[1], rf));
+                  args1.push_back(mk<AND>(arrayFormulas[0], rf));
+                  args2.push_back(mk<AND>(arrayFormulas[1], mk<NEG>(rf)));
                   Expr e1 = mknary<EXISTS>(args1);
                   Expr e2 = mknary<EXISTS>(args2);
                   candidates[srcRel].insert(mk<OR>(e1, e2));
@@ -1423,7 +1433,7 @@ namespace ufo
                   else
                     assert(0 && "not implemented");
                   candidates[srcRel].insert(mknary<EXISTS>(args1));
-                }                
+                }
               }
             }
           }
@@ -1487,7 +1497,7 @@ namespace ufo
             } else if (forall == false) {
               dcd = replaceAll(dcd, dcd->last(), mk<AND>(rf, dcd->last()));
             }
-            
+
             candidatesTmp[srcRel].insert(dcd);
             if (checkCHC(hr, candidatesTmp)) {
               candidates[srcRel].insert(dcd);
@@ -1497,7 +1507,7 @@ namespace ufo
       }
     }
 
-    
+
     //Backward propagation from query
     void inferInv1()
     {
@@ -1524,22 +1534,22 @@ namespace ufo
           outs () << "   failed\n";
           newWeaken(hr);
         } else {
-          abduce(hr);     
-          // filterUnsat();          
+          abduce(hr);
+          // filterUnsat();
           vector<HornRuleExt*> worklist;
           for (int j = 0; j <= i; j++) {
             auto &hr2 = ruleManager.chcs[propOrder[j]];
             worklist.push_back(&hr2);
           }
           multiHoudini(worklist);
-          
+
           //no progress
           if (equalCands(candidatesTmp)) {
             break;
           }
         }
       }
-      
+
       // double check
       filterUnsat();
       if (checkAllOver(true)) {
