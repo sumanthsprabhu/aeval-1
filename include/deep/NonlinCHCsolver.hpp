@@ -1015,6 +1015,9 @@ namespace ufo
 
           Expr model = u.getModel(hr->dstVars);
           Expr modelSrc = u.getModel(srcVars);
+          outs() << "msrc: " << *modelSrc << "\n";
+          outs() << "mdst: " << *model << "\n";
+          
           if (isSkippable(model, hr->dstVars))//, candidatesTmp))
           {
             candidatesTmp[dstRel].clear();
@@ -1365,7 +1368,12 @@ namespace ufo
           ExprVector arrayFormulas;
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::REAL, qVars, itrVars));
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars));
-                    
+
+          
+          for (auto af : arrayFormulas) {
+            outs() << "af: " << *af << "\n";
+          }
+          
           for (auto qv : qVars) {
             for (auto iv : itrVars) {
               Expr rf;
@@ -1405,8 +1413,8 @@ namespace ufo
               } else if (forall == false) {
                 if (hr.isInductive)
                 {
-                  args1.push_back(mk<AND>(arrayFormulas[0], mk<NEG>(rf)));
-                  args2.push_back(mk<AND>(arrayFormulas[1], rf));
+                  args1.push_back(mk<AND>(arrayFormulas[1], mk<NEG>(rf)));
+                  args2.push_back(mk<AND>(arrayFormulas[0], rf));
                   Expr e1 = mknary<EXISTS>(args1);
                   Expr e2 = mknary<EXISTS>(args2);
                   candidates[srcRel].insert(mk<OR>(e1, e2));
@@ -1524,7 +1532,8 @@ namespace ufo
           outs () << "   failed\n";
           newWeaken(hr);
         } else {
-          abduce(hr);     
+          abduce(hr);
+          printCands(false);
           // filterUnsat();          
           vector<HornRuleExt*> worklist;
           for (int j = 0; j <= i; j++) {
