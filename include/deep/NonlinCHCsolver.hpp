@@ -1377,8 +1377,39 @@ namespace ufo
             outs () << "vacuous\n"; // GF: to test better
             exit(0);
           }
-
+          
           arrayFormulas.push_back(getArrayFormula(hr, dcd, AbdType::MOCK, qVars, itrVars));
+
+          //when srcRel is a precondition
+          if (itrVars.size() == 0) {
+            for (auto qv : qVars) {
+              ExprVector args1 = {qv->left()};
+              ExprVector args2 = args1;
+              if (forall == true)
+              {
+                args1.push_back(arrayFormulas[0]);
+                args2.push_back(arrayFormulas[1]);
+                if (containsOp<ARRAY_TY>(arrayFormulas[0]))
+                  candidates[srcRel].insert(mknary<FORALL>(args1));
+                if (containsOp<ARRAY_TY>(arrayFormulas[1]))
+                  candidates[srcRel].insert(mknary<FORALL>(args2));
+              } else if (forall == false)
+              {
+                args1.push_back(arrayFormulas[1]);
+                args2.push_back(arrayFormulas[0]);
+                if (containsOp<ARRAY_TY>(arrayFormulas[0]) && containsOp<ARRAY_TY>(arrayFormulas[1])) {
+                  Expr e1 = mknary<EXISTS>(args1);
+                  Expr e2 = mknary<EXISTS>(args2);
+                  candidates[srcRel].insert(mk<OR>(e1, e2));              
+                } else if (containsOp<ARRAY_TY>(arrayFormulas[0])) {
+                  candidates[srcRel].insert(mknary<EXISTS>(args1));
+                } else if (containsOp<ARRAY_TY>(arrayFormulas[1])) {
+                  candidates[srcRel].insert(mknary<EXISTS>(args2));
+                }
+              }
+            }
+          }
+          
           for (auto qv : qVars) {
             for (auto iv : itrVars) {
               Expr rf;
@@ -1539,13 +1570,15 @@ namespace ufo
         } else {
           abduce(hr);
           // filterUnsat();
+          printCands(false);
           vector<HornRuleExt*> worklist;
           for (int j = 0; j <= i; j++) {
             auto &hr2 = ruleManager.chcs[propOrder[j]];
             worklist.push_back(&hr2);
           }
           multiHoudini(worklist);
-
+          printCands(false);
+          
           //no progress
           if (equalCands(candidatesTmp)) {
             break;
