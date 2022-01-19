@@ -20,4 +20,7 @@
 
 (rule (=> (and (inv2 a b i N) (>= i N) (< 0 i1) (< i1 N) (not (>= (select b i1) 1))) fail))
 
+;; (rule (=> (and (inv2 a b i N) (>= i N)
+;;                (not (exists ((i1 Int)) (and (< 0 i1) (< i1 N)  (< (select b i1) 1))))) fail))
+
 (query fail)

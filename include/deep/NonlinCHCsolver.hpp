@@ -2,6 +2,7 @@
 #define NONLINCHCSOLVER__HPP__
 
 #include "HornNonlin.hpp"
+#include <fstream>
 
 using namespace std;
 using namespace boost;
@@ -27,6 +28,8 @@ namespace ufo
     getCombinations(in, out, pos + 1);
   }
 
+  enum class Result_t {SAT=0, UNSAT, UNKNOWN};
+  
   class NonlinCHCsolver
   {
     private:
@@ -1291,9 +1294,18 @@ namespace ufo
           }
         }
 
+        for (auto v : abdVars) {
+          outs() << "v: " << *v << "\n";
+        }
+        for (auto a : all) {
+          outs() << "a: " << *a << "\n";
+        }
+        
         Expr newCnd = keepQuantifiersRepl(conjoin(all, m_efac), abdVars);
         res.push_back(mkNeg(newCnd));
 
+        outs() << "newcnd: " << *newCnd << "\n";
+        
         ExprSet dsjs;   // GF: to improve the identification of cell properties
         getDisj(res.back(), dsjs);    // maybe outside of this procedure
         for (auto & a : dsjs) if (containsOp<SELECT>(a)) cellFls.push_back(a);
@@ -1543,7 +1555,7 @@ namespace ufo
 
 
     //Backward propagation from query
-    void inferInv1()
+    Result_t inferInv1()
     {
       for (int i = 0; i < propOrder.size(); i++) {
         auto & hr = ruleManager.chcs[propOrder[i]];
@@ -1570,7 +1582,10 @@ namespace ufo
         } else {
           abduce(hr);
           // filterUnsat();
-          printCands(false);
+          outs() << "\n src->";
+          pprint(candidates[hr.srcRelations[0]], 2);
+          outs() << "\n dst->";
+          pprint(candidates[hr.dstRelation], 2);
           vector<HornRuleExt*> worklist;
           for (int j = 0; j <= i; j++) {
             auto &hr2 = ruleManager.chcs[propOrder[j]];
@@ -1589,11 +1604,351 @@ namespace ufo
       // double check
       filterUnsat();
       if (checkAllOver(true)) {
-        return printCands();
+        printCands();
+        return Result_t::UNSAT;
       } else {
         outs () << "unknown\n";
+        return Result_t::UNKNOWN;
       }
     }
+
+    ExprVector getAllRels()
+    {
+      ExprVector retRels;
+
+      for (auto d : ruleManager.decls) {
+        retRels.push_back(d->left());
+      }
+
+      return retRels;
+    }
+
+
+
+    void sanitizeForDump(string & in)
+    {
+      in.erase(remove(in.begin(), in.end(), '_'), in.end());
+      in.erase(remove(in.begin(), in.end(), '|'), in.end());
+
+      map<char,char> substmap;
+      // substmap['_'] = 'U';
+      // substmap['|'] = 'B';
+      substmap['\''] = 'P';
+      substmap['$'] = 'D';
+      substmap[':'] = 'C';
+      substmap[';'] = 'c';
+
+      for (size_t i = 0; i < in.size(); i++) {
+        auto subst = substmap.find(in[i]);
+        if (subst != substmap.end()) {
+          in[i] = subst->second;
+        }
+      }
+      // std::replace(in.begin(), in.end(), '\'', 'p');
+      // std::replace(in.begin(), in.end(), '$', 'D');
+      // std::replace(in.begin(), in.end(), ':', 'C');
+    }
+
+    string typeToString(Expr ty)
+    {
+      if (isOpX<BOOL_TY>(ty)) return string("Bool ");
+      else if (isOpX<REAL_TY>(ty)) return string("Real ");
+      else if (isOpX<INT_TY>(ty)) return string("Int ");
+      else if (isOpX<ARRAY_TY>(ty)) return string("(Array ") +
+                                      typeToString(ty->left()) +
+                                      string(" ") +
+                                      typeToString(ty->right()) +
+                                      string(") ");
+      else return string("UnSupportedSort ");
+    }
+    
+    
+    void printAllVarsRels(const ExprSet & allVars, stringstream & decls)
+    {
+      for (auto v : allVars) {
+        decls << "(declare-var " << *v << " " << u.varType(v) << ")\n";
+      }
+
+      for (auto d : ruleManager.decls) {
+        if (d == ruleManager.failDecl) continue;
+        decls << "(declare-rel " << *bind::fname(d) << " (";
+        for (unsigned i = 0; i < bind::domainSz(d); i++)
+        {
+          Expr ty = bind::domainTy(d, i);
+          decls << typeToString(ty);
+        }
+        decls << ")) \n";
+      }
+    }
+
+    string dumpToFile(stringstream & decls, stringstream & rules, string oldsmt = "", string postfix = "")
+    {
+      if (oldsmt.size() == 0) {
+        oldsmt = ruleManager.infile;
+      }
+
+      string newsmt = oldsmt.substr(oldsmt.find_last_of("/"));
+      newsmt = "/tmp/" + newsmt.substr(0, newsmt.find_last_of("."));
+      newsmt += postfix + "_" + to_string(std::chrono::system_clock::now().time_since_epoch().count());
+      newsmt += ".smt2";
+
+      string ds = decls.str();
+      string rs = rules.str();
+
+      sanitizeForDump(ds);
+      sanitizeForDump(rs);
+
+      ofstream newsmtFile(newsmt);      
+      newsmtFile << ds << "\n" << rs << "\n";
+      newsmtFile.close();
+
+      return newsmt;
+    }
+    
+    //construct a new sytem of CHCs with the same structure of
+    //current system, but postcondition negated
+    string constructInverseRules(const Expr & curPost, const Expr & loopTerm)
+    {
+      stringstream newRules;
+      stringstream newDecls;
+      ExprSet allVars;
+      string queryRelStr = isOpX<FALSE>(ruleManager.failDecl) ? "fail" : lexical_cast<string>(ruleManager.failDecl);
+
+      for (auto inve : ruleManager.invVars) {
+        allVars.insert(inve.second.begin(), inve.second.end());
+      }
+
+      for (auto & hr : ruleManager.chcs)
+      {
+        for (int i = 0; i < hr.srcVars.size(); i++) {
+          allVars.insert(hr.srcVars[i].begin(), hr.srcVars[i].end());
+        }
+        allVars.insert(hr.locVars.begin(), hr.locVars.end());
+        allVars.insert(hr.dstVars.begin(), hr.dstVars.end());
+
+        ExprSet antec;
+        for (int i = 0; i < hr.srcRelations.size(); i++) {
+          Expr src = hr.srcRelations[i];
+          for (auto d : ruleManager.decls) {
+            if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*src)) {
+              Expr t = bind::fapp(d, hr.srcVars[i]);
+              antec.insert(t);
+              break;
+            }
+          }
+        }
+
+        bool addFail;
+        Expr conseq;
+        if (!hr.isQuery) {
+          addFail = false;
+          antec.insert(hr.body);
+          for (auto d : ruleManager.decls) {
+            if (lexical_cast<string>(*bind::fname(d)) == lexical_cast<string>(*(hr.dstRelation))) {
+              conseq = bind::fapp(d, hr.dstVars);
+              break;
+            }
+          }
+        } else {
+          antec.insert(mk<NEG>(curPost));
+          antec.insert(loopTerm);
+          addFail = true;
+        }
+        
+        if (addFail) {
+          newRules << "(rule (=> ";
+          u.print(conjoin(antec, m_efac), newRules);
+          newRules << " " << queryRelStr << "))\n";
+        } else {
+          newRules << "(rule ";
+          u.print(mk<IMPL>(conjoin(antec, m_efac), conseq), newRules);
+          newRules << ")\n";
+        }
+      }
+      
+      printAllVarsRels(allVars, newDecls);
+      newDecls << "(declare-rel " << queryRelStr << "())\n";
+      newRules << "(query " << queryRelStr << ")\n";
+      return dumpToFile(newDecls, newRules, ruleManager.infile);
+    }
+
+    Expr getPrecondnRel()
+    {
+      ExprVector allRels = getAllRels();
+      for (auto aItr = allRels.begin(); aItr != allRels.end();)
+      {
+        bool notPRel = false;
+        for (auto & hr : ruleManager.chcs) {
+          if (*aItr == hr.dstRelation) {
+            if (hr.isFact ||
+                hr.isInductive &&
+                find(hr.srcRelations.begin(), hr.srcRelations.end(), hr.dstRelation) != hr.srcRelations.end()) {
+              notPRel = true;
+            }
+          } else if(hr.isQuery &&
+                    find(hr.srcRelations.begin(), hr.srcRelations.end(), hr.dstRelation) != hr.srcRelations.end()) {
+            notPRel = true;
+          }
+        }        
+        if (notPRel) {
+          aItr = allRels.erase(aItr);
+        } else {
+          ++aItr;
+        }            
+      }      
+      assert(allRels.size() == 1 &&
+             "number of preconditions should be one");
+      return allRels[0];
+    }
+
+    int getPrecondnCHC(const Expr & pcRel)
+    {
+      for (int i=0; i < ruleManager.chcs.size(); i++)
+      {
+        auto & hr = ruleManager.chcs[i];
+        if (hr.srcRelations[0] == pcRel) {
+          return i;
+        }
+      }
+      return -1;
+    }
+  
+    // void splitPrecond(const Expr & pcRel, vector<boost::tribool> & foralls, vector<ExprSet> & qVarss, ExprVector & rfs, ExprVector & afs)
+    // {
+    //   for (auto pc : candidates[pcRel]) {
+    //     if (isOpX<FORALL>(pc)) {
+    //       foralls.push_back(true);
+    //     } else if (isOpX<EXISTS>(pc)) {
+    //       foralls.push_back(false);
+    //     } else {
+    //       foralls.push_back(boost::indeterminate);
+    //     }
+
+    //     ExprSet pcqVars;
+    //     getQuantifiedVars(pc, pcqVars);
+    //     qVarss.push_back(pcqVars);
+        
+    //     ExprSet disjs;
+    //     ExprSet pcafs;
+    //     ExprSet pcrfs;        
+    //     getDisj(pc, disjs);
+    //     for (auto pcd : disjs) {
+    //       if (containsOp<ARRAY_TY>(pcd)) {
+    //         pcafs.insert(pcd);
+    //       } else {
+    //         pcrfs.insert(mkNeg(pcd));
+    //       }
+    //     }
+    //     rfs.push_back(conjoin(pcrfs));
+    //     afs.push_back(conjoin(pcafs));
+    //   }      
+    // }
+
+    void splitQueryBody(Expr & post, Expr & loopTerm)
+    {
+      HornRuleExt& hr = ruleManager.chcs[ruleManager.qCHCNum];
+      ExprSet cnjs;
+      ExprSet termCondns;
+      ExprSet newCnjs;
+      if (isOpX<EXISTS>(hr.body)) {
+        getConj((hr.body)->last(), cnjs);
+      } else {
+        getConj(hr.body, cnjs);
+      }
+      ExprVector allVars;
+      for (auto & a : hr.srcVars) allVars.insert(allVars.end(), a.begin(), a.end());
+      for (auto & a : cnjs)
+      {
+        if (!isSubset(a, allVars)) newCnjs.insert(a);
+        else termCondns.insert(a);
+      }
+      if (isOpX<EXISTS>(hr.body)) {
+        ExprSet qVars;
+        getQuantifiedVars(hr.body, qVars);
+        ExprVector args(qVars.begin(), qVars.end());
+        args.push_back(conjoin(newCnjs, m_efac));
+        post = mknary<EXISTS>(args);
+      } else {
+        post =conjoin(newCnjs, m_efac);
+      }
+      
+      loopTerm = conjoin(termCondns, m_efac);
+    }
+
+    void getSoln(map<Expr, ExprSet> & soln, const ExprVector & rels, map<Expr, ExprVector> & invVars)
+    {
+      for (auto r : rels) {
+        soln[r].clear();
+        for (auto e : candidates) {
+          string saneName = lexical_cast<string>(*r);
+          sanitizeForDump(saneName);
+          if (saneName == lexical_cast<string>(*(e.first))) {
+            for (auto c : e.second) {
+              soln[r].insert(replaceAll(c, ruleManager.invVars[e.first], invVars[r]));
+            }
+          }
+        }
+      }
+    }
+
+        
+    Result_t solveInverse(const string & invsmt, map<Expr, ExprSet> & soln)
+    {
+      EZ3 z3(m_efac);
+      CHCs nrm(m_efac, z3);
+      nrm.parse(invsmt);
+      NonlinCHCsolver newNonlin(nrm, 1);
+      ExprVector query;
+
+      newNonlin.initRangeAbduction();
+      Result_t res = newNonlin.inferInv1();
+      assert(res != Result_t::SAT);
+
+      if (res == Result_t::UNSAT) {
+        ExprVector allRels = getAllRels();
+        newNonlin.getSoln(soln, allRels, ruleManager.invVars);
+      }
+
+      return res;
+    }
+
+    bool pWeakCheck(map<Expr, ExprSet> & invSoln)
+    {
+      Expr pRel = getPrecondnRel();
+      int chcIndex = getPrecondnCHC(pRel);
+      assert (chcIndex >= 0);
+      auto pCHC = ruleManager.chcs[chcIndex];
+      Expr dstRel = pCHC.dstRelation;
+
+      map<Expr, ExprSet> newCand;
+      newCand[dstRel].insert(invSoln[dstRel].begin(), invSoln[dstRel].end());
+      newCand[pRel].insert(mkNeg(conjoin(candidates[pRel], m_efac)));
+      
+      return checkCHC(pCHC, newCand);
+    }
+                
+    void checkMaximality()
+    {
+      //get new candidate for postcondition
+      Expr post;
+      Expr loopTerm;
+      splitQueryBody(post, loopTerm);
+      string inverseFile = constructInverseRules(post, loopTerm);
+      outs() << "dumped to: " <<  inverseFile << "\n";
+
+      map<Expr, ExprSet> invSoln;
+      Result_t res = solveInverse(inverseFile, invSoln);
+      if (res == Result_t::UNSAT) {
+        if (pWeakCheck(invSoln)) {
+          outs() << "maximal!\n";
+        } else {
+          assert(0 && "not-max");
+        }
+      } else {
+        outs() << "may not be maximal\n";
+      }
+    }
+
 
     //backward and forward, single CHC propagation
     void inferInv2()
@@ -1809,6 +2164,7 @@ namespace ufo
     if (inv == 0) {
       nonlin.initRangeAbduction();
       nonlin.inferInv1();
+      nonlin.checkMaximality();
     } else
       nonlin.solveIncrementally(inv);
   };

@@ -118,6 +118,12 @@ namespace ufo
     return true;
   }
 
+  template<typename Range> static bool isSubset(Expr a, Range& bv){
+    ExprVector av;
+    filter (a, IsConst (), inserter(av, av.begin()));
+    return isSubset(av, bv);
+  }
+
   inline static void distribDisjoin(ExprSet& dsj1, ExprSet& dsj2, ExprSet& comm)
   {
     for (auto it1 = dsj1.begin(); it1 != dsj1.end(); )
