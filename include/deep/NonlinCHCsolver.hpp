@@ -813,16 +813,22 @@ namespace ufo
 
     void printCands(bool unsat = true, bool simplify = false)
     {
-      if (unsat) outs () << "unsat\n";
+      printCands(outs(), unsat, simplify);
+    }
+
+    template <typename OutputStream>
+    OutputStream & printCands(OutputStream & out, bool unsat = true, bool simplify = false)
+    {
+      if (unsat) out << "unsat\n";
 
       for (auto & a : candidates)
       {
-        outs () << "(define-fun " << *a.first << " (";
+        out << "(define-fun " << *a.first << " (";
         for (auto & b : ruleManager.invVars[a.first])
         {
-          outs () << "(" << *b << " " << u.varType(b) << ")";
+          out << "(" << *b << " " << u.varType(b) << ")";
         }
-        outs () << ") Bool\n  ";
+        out << ") Bool\n  ";
 
         ExprSet lms = a.second;
         Expr sol = conjoin(lms, m_efac);
@@ -834,7 +840,7 @@ namespace ufo
         map<Expr, ExprVector> qv;
         getQVars (sol, qv);
         for (auto & q : qv) minusSets(allVars, q.second);
-        assert (allVars.empty());
+        // assert (allVars.empty());
 //        if (!u.isSat(sol)) assert(0);
 
         Expr res = (simplifyArithm(sol));
@@ -846,9 +852,10 @@ namespace ufo
           u.removeRedundantConjuncts(lms);
           res = conjoin(lms, m_efac);
         }
-        u.print(res);
-        outs () << ")\n";
+        u.print(res, out);
+        out << ")\n";
       }
+      return out;
     }
 
     bool filterUnsat()
@@ -1308,7 +1315,11 @@ namespace ufo
         
         ExprSet dsjs;   // GF: to improve the identification of cell properties
         getDisj(res.back(), dsjs);    // maybe outside of this procedure
-        for (auto & a : dsjs) if (containsOp<SELECT>(a)) cellFls.push_back(a);
+        for (auto & a : dsjs) {
+          if (containsOp<SELECT>(a)) {
+            cellFls.push_back(a);
+          } 
+        }
       }
 
       if (false == u.isSat(cellFls))
@@ -1401,10 +1412,12 @@ namespace ufo
               {
                 args1.push_back(arrayFormulas[0]);
                 args2.push_back(arrayFormulas[1]);
-                if (containsOp<ARRAY_TY>(arrayFormulas[0]))
+                if (containsOp<ARRAY_TY>(arrayFormulas[0])) {
                   candidates[srcRel].insert(mknary<FORALL>(args1));
-                if (containsOp<ARRAY_TY>(arrayFormulas[1]))
+                } 
+                if (containsOp<ARRAY_TY>(arrayFormulas[1])) {
                   candidates[srcRel].insert(mknary<FORALL>(args2));
+                } 
               } else if (forall == false)
               {
                 args1.push_back(arrayFormulas[1]);
@@ -1432,6 +1445,9 @@ namespace ufo
               }
 
               outs() << "RF: " << *rf << "\n";
+              outs() << "AF0: " << *(arrayFormulas[0]) << "\n";
+              outs() << "AF1: " << *(arrayFormulas[1]) << "\n";
+              
               ExprVector args1 = {qv->left()};
               ExprVector args2 = args1;
               if (forall == true)
@@ -1949,6 +1965,15 @@ namespace ufo
       }
     }
 
+    void persistCands(string smt)
+    {
+      string output = smt.substr(smt.find_last_of("/"));
+      output = "/tmp/" + output.substr(0, output.find_last_of("."));
+      output += ".result";
+      ofstream outputfile(output);
+      printCands(outputfile, false, true);
+      outputfile.close();
+    }
 
     //backward and forward, single CHC propagation
     void inferInv2()
@@ -2154,7 +2179,7 @@ namespace ufo
     }
   };
 
-  inline void solveNonlin(string smt, int inv, int stren)
+  inline void solveNonlin(string smt, int inv, int stren, int checkmax)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
@@ -2163,8 +2188,12 @@ namespace ufo
     NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv == 0) {
       nonlin.initRangeAbduction();
-      nonlin.inferInv1();
-      nonlin.checkMaximality();
+      if (nonlin.inferInv1() == Result_t::UNSAT) {
+        if (checkmax) {
+          nonlin.checkMaximality();
+          nonlin.persistCands(smt);
+        }
+      }
     } else
       nonlin.solveIncrementally(inv);
   };

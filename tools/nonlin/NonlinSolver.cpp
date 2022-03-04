@@ -41,6 +41,7 @@ int main (int argc, char ** argv)
   }
   int cex = getIntValue("--cex", 0, argc, argv);
   int str = getIntValue("--stren", 1, argc, argv);
-  solveNonlin(string(argv[argc-1]), cex, str);
+  int checkmax = getIntValue("--max", 1, argc, argv);
+  solveNonlin(string(argv[argc-1]), cex, str, checkmax);
   return 0;
 }
