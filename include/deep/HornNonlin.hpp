@@ -292,7 +292,6 @@ namespace ufo
         allOrigSymbs.insert(allOrigSymbs.end(), origDstSymbs.begin(), origDstSymbs.end());
 	      // simplBoolReplCnj(allOrigSymbs, lin);
         hr.body = conjoin(lin, m_efac);
-outs () << "hr.body = " << hr.body << "\n";
         vector<ExprVector> tmp;
         // we may have several applications of the same predicate symbol in the body:
         for (int i = 0; i < hr.srcRelations.size(); i++)

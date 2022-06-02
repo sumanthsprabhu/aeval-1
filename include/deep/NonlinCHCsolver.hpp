@@ -47,7 +47,7 @@ namespace ufo
     int strenBound;
     bool debug = false;
     vector<int> propOrder;
-    map<Expr, ExprVector> invItrs;
+    map<pair<int, Expr>, ExprVector> invItrs;
     map<Expr, ExprVector> invSizeVars;
     map<Expr, bool> invItrInc;
 
@@ -140,7 +140,7 @@ namespace ufo
       for (auto & a : complex)
       {
         Expr repl = bind::intConst(mkTerm<string>
-              ("__repl_" + lexical_cast<string>(repls.size()), m_efac));
+                                   ("__repl_" + lexical_cast<string>(repls.size()), m_efac));
         repls[a] = repl;
         replsRev[repl] = a;
         ExprSet tmp;
@@ -1094,9 +1094,10 @@ namespace ufo
 
     void initRangeAbduction()
     {
-      for (auto & hr : ruleManager.chcs) {
+      for (auto i = 0; i < ruleManager.chcs.size(); i++) {
+        auto & hr = ruleManager.chcs[i];
         if (find(hr.srcRelations.begin(), hr.srcRelations.end(), hr.dstRelation) != hr.srcRelations.end()) {
-          auto & itrs = invItrs[hr.dstRelation];
+          auto & itrs = invItrs[make_pair(i,hr.dstRelation)];
           auto & sizeVars = invSizeVars[hr.dstRelation];
           auto & inc  = invItrInc[hr.dstRelation];
           getIterators(hr, itrs, sizeVars, inc);
@@ -1348,8 +1349,10 @@ namespace ufo
       }
     }
 
-    void abduce(HornRuleExt& hr)
+    void abduce(const int hrIndex)
     {
+      auto & hr = ruleManager.chcs[hrIndex];
+      
       if (hr.isFact) return;
 
       if (hr.isQuery) {
@@ -1388,7 +1391,7 @@ namespace ufo
           ExprSet qVarsTmp;
           getQuantifiedVars(dcd, qVarsTmp);
           ExprVector qVars(qVarsTmp.begin(), qVarsTmp.end());
-          ExprVector & itrVars = invItrs[srcRel];
+          ExprVector & itrVars = invItrs[make_pair(hrIndex, srcRel)];
           ExprVector & sizeVars = invSizeVars[srcRel];
           bool itrUp = invItrInc[srcRel];
 
@@ -1503,8 +1506,9 @@ namespace ufo
       }
     }
 
-    void newWeaken(HornRuleExt& hr)
+    void newWeaken(int hrIndex)
     {
+      auto & hr = ruleManager.chcs[hrIndex];
       if (hr.isFact) return;
 
       if (hr.isQuery) {
@@ -1542,7 +1546,7 @@ namespace ufo
 
         for (auto qv : qVarsTmp) {
 
-          for (auto iv : invItrs[srcRel]) {
+          for (auto iv : invItrs[make_pair(hrIndex,srcRel)]) {
             Expr rf;
             if (invItrInc[srcRel]) {
               rf = mk<GEQ>(qv,iv);
@@ -1569,16 +1573,17 @@ namespace ufo
       }
     }
 
-
     //Backward propagation from query
-    Result_t inferInv1()
+    Result_t inferInv()
     {
       for (int i = 0; i < propOrder.size(); i++) {
-        auto & hr = ruleManager.chcs[propOrder[i]];
-        outs () << "\n\n\n===============\ninferInv1 for chc:  " <<
+        int hrIndex = propOrder[i];
+        auto & hr = ruleManager.chcs[hrIndex];
+        outs () << "\n\n\n===============\ninferInv for chc:  " <<
           (hr.srcRelations.empty() ? "" : lexical_cast<string>(hr.srcRelations[0]))
                 << " -> " << hr.dstRelation << "\n";
 
+        outs() << "\n\n hr.body " << *(hr.body) <<  "\n\n";
         auto candidatesTmp = candidates;
         if (!hr.srcRelations.empty())
         {
@@ -1594,9 +1599,9 @@ namespace ufo
         bool res = checkCHC(hr, candidates);
         if (res) {
           outs () << "   failed\n";
-          newWeaken(hr);
+          newWeaken(hrIndex);
         } else {
-          abduce(hr);
+          abduce(hrIndex);
           // filterUnsat();
           outs() << "\n src->";
           pprint(candidates[hr.srcRelations[0]], 2);
@@ -1917,7 +1922,7 @@ namespace ufo
       ExprVector query;
 
       newNonlin.initRangeAbduction();
-      Result_t res = newNonlin.inferInv1();
+      Result_t res = newNonlin.inferInv();
       assert(res != Result_t::SAT);
 
       if (res == Result_t::UNSAT) {
@@ -1973,68 +1978,6 @@ namespace ufo
       ofstream outputfile(output);
       printCands(outputfile, false, true);
       outputfile.close();
-    }
-
-    //backward and forward, single CHC propagation
-    void inferInv2()
-    {
-      hasArrays = true;
-      for (auto & hr : ruleManager.chcs) {
-        auto candidatesTmp = candidates;
-        for (bool fwd : {false, true}) {
-          bool res = checkCHC(hr, candidates);
-          if (!res) {
-            if (fwd) {
-              propagateCandidatesForward(hr);
-              vector<HornRuleExt*> worklist;
-              worklist.push_back(&hr);
-              multiHoudini(worklist);
-            } else {
-              propagateCandidatesBackward(hr);
-              filterUnsat();
-              strengthen();
-            }
-            //no progress
-            if (equalCands(candidatesTmp)) {
-              break;
-            }
-            inferInv2();
-          }
-        }
-      }
-      // double check
-      if (checkAllOver(true)) {
-        return printCands();
-      } else {
-        outs () << "unknown\n";
-      }
-    }
-
-
-    //backward, multiple CHC propagation
-    void inferInv3()
-    {
-      for (auto & hr : ruleManager.chcs) {
-        auto candidatesTmp = candidates;
-        bool res = checkCHC(hr, candidates);
-          if (!res) {
-            declsVisited.clear();
-            declsVisited.insert(ruleManager.failDecl);
-            propagate(false);
-            filterUnsat();
-            strengthen();
-            if (equalCands(candidatesTmp)) {
-              break;
-            }
-            inferInv3(); //perhaps, this call is not required?
-          }
-      }
-      //double check
-      if (checkAllOver(true)) {
-        return printCands();
-      } else {
-        outs () << "unknown\n";
-      }
     }
 
     //Backward and forward, multiple CHC propagation
@@ -2183,19 +2126,49 @@ namespace ufo
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
+
+    /* itp start */
+    Expr arr = bind::mkConst(mkTerm<string>("A", m_efac),
+                             mk<ARRAY_TY>(mk<INT_TY>(m_efac), mk<INT_TY>(m_efac)));
+    Expr N   = bind::intConst(mkTerm<string>("Nee", m_efac));
+    Expr j = bind::intConst(mkTerm<string>("j", m_efac));
+    Expr zero = mkTerm(mpz_class(0), m_efac);
+    Expr one = mkTerm(mpz_class(1), m_efac);
+    Expr two = mkTerm(mpz_class(2), m_efac);    
+    ExprVector args;
+    
+    args.push_back(j);
+    args.push_back(mk<IMPL>(mk<AND>(mk<GEQ>(zero, j), mk<LT>(j , N)), mk<GT>(mk<SELECT>(arr, j), zero)));
+    Expr B = mknary<FORALL>(args);
+    outs() << "B: " << *B << "\n";
+
+    args.clear();
+    args.push_back(j);
+    args.push_back(mk<IMPL>(mk<AND>(mk<GEQ>(one, j), mk<LT>(j , N)), mk<EQ>(mk<SELECT>(arr, j), one)));
+    Expr A = mk<AND>(mknary<FORALL>(args), mk<EQ>(mk<SELECT>(arr, zero), zero), mk<EQ>(N, two));
+    outs() << "A: " << *A << "\n";
+
+    // args.clear();
+    // args.push_back(arr);
+    // args.push_back(N);
+    Expr itp = getItp(A, B);
+    outs() << "ITP: " << *itp << "\n";
+    /* itp end */
+    
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv == 0) {
       nonlin.initRangeAbduction();
-      if (nonlin.inferInv1() == Result_t::UNSAT) {
+      if (nonlin.inferInv() == Result_t::UNSAT) {
         if (checkmax) {
           nonlin.checkMaximality();
           nonlin.persistCands(smt);
         }
       }
-    } else
+    } else {
       nonlin.solveIncrementally(inv);
+    }
   };
 }
 
