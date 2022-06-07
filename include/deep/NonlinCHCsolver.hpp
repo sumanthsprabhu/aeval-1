@@ -2122,7 +2122,7 @@ namespace ufo
     }
   };
 
-  inline void solveNonlin(string smt, int inv, int stren, int checkmax)
+  inline void solveNonlin(string smt, int inv, int stren, bool checkmax)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
