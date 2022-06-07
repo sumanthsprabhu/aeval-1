@@ -1312,7 +1312,7 @@ namespace ufo
         Expr newCnd = keepQuantifiersRepl(conjoin(all, m_efac), abdVars);
         res.push_back(mkNeg(newCnd));
 
-        outs() << "newcnd: " << *newCnd << "\n";
+        outs() << "newcnd: " << *newCnd << "\n" << "abdtype: " << abd << "\n";
         
         ExprSet dsjs;   // GF: to improve the identification of cell properties
         getDisj(res.back(), dsjs);    // maybe outside of this procedure
@@ -2128,31 +2128,31 @@ namespace ufo
     EZ3 z3(m_efac);
 
     /* itp start */
-    Expr arr = bind::mkConst(mkTerm<string>("A", m_efac),
-                             mk<ARRAY_TY>(mk<INT_TY>(m_efac), mk<INT_TY>(m_efac)));
-    Expr N   = bind::intConst(mkTerm<string>("Nee", m_efac));
-    Expr j = bind::intConst(mkTerm<string>("j", m_efac));
-    Expr zero = mkTerm(mpz_class(0), m_efac);
-    Expr one = mkTerm(mpz_class(1), m_efac);
-    Expr two = mkTerm(mpz_class(2), m_efac);    
-    ExprVector args;
+    // Expr arr = bind::mkConst(mkTerm<string>("A", m_efac),
+    //                          mk<ARRAY_TY>(mk<INT_TY>(m_efac), mk<INT_TY>(m_efac)));
+    // Expr N   = bind::intConst(mkTerm<string>("Nee", m_efac));
+    // Expr j = bind::intConst(mkTerm<string>("j", m_efac));
+    // Expr zero = mkTerm(mpz_class(0), m_efac);
+    // Expr one = mkTerm(mpz_class(1), m_efac);
+    // Expr two = mkTerm(mpz_class(2), m_efac);    
+    // ExprVector args;
     
-    args.push_back(j);
-    args.push_back(mk<IMPL>(mk<AND>(mk<GEQ>(zero, j), mk<LT>(j , N)), mk<GT>(mk<SELECT>(arr, j), zero)));
-    Expr B = mknary<FORALL>(args);
-    outs() << "B: " << *B << "\n";
-
-    args.clear();
-    args.push_back(j);
-    args.push_back(mk<IMPL>(mk<AND>(mk<GEQ>(one, j), mk<LT>(j , N)), mk<EQ>(mk<SELECT>(arr, j), one)));
-    Expr A = mk<AND>(mknary<FORALL>(args), mk<EQ>(mk<SELECT>(arr, zero), zero), mk<EQ>(N, two));
-    outs() << "A: " << *A << "\n";
+    // args.push_back(j);
+    // args.push_back(mk<IMPL>(mk<AND>(mk<GEQ>(zero, j), mk<LT>(j , N)), mk<GT>(mk<SELECT>(arr, j), zero)));
+    // Expr B = mknary<FORALL>(args);
+    // outs() << "B: " << *B << "\n";
 
     // args.clear();
-    // args.push_back(arr);
-    // args.push_back(N);
-    Expr itp = getItp(A, B);
-    outs() << "ITP: " << *itp << "\n";
+    // args.push_back(j);
+    // args.push_back(mk<IMPL>(mk<AND>(mk<GEQ>(one, j), mk<LT>(j , N)), mk<EQ>(mk<SELECT>(arr, j), one)));
+    // Expr A = mk<AND>(mknary<FORALL>(args), mk<EQ>(mk<SELECT>(arr, zero), zero), mk<EQ>(N, two));
+    // outs() << "A: " << *A << "\n";
+
+    // // args.clear();
+    // // args.push_back(arr);
+    // // args.push_back(N);
+    // Expr itp = getItp(A, B);
+    // outs() << "ITP: " << *itp << "\n";
     /* itp end */
     
     CHCs ruleManager(m_efac, z3);

@@ -790,14 +790,14 @@ namespace ufo
     }
     Expr condTmp = replaceAll(fla, repls);
 
-    // outs() << "eTmp: ";
-    // pprint(condTmp);
-    // outs() << "\nto elim: ";
-    // pprint(varsCond);
-    // outs () << "\n";
+    outs() << "eTmp: ";
+    pprint(condTmp);
+    outs() << "\nto elim: ";
+    pprint(varsCond);
+    outs () << "\n";
 
     Expr tmp = eliminateQuantifiers(condTmp, varsCond);
-    // outs () << "res = " << tmp << "\n";
+    outs () << "res = " << tmp << "\n";
     tmp = replaceAllRev(tmp, repls);
     return eliminateQuantifiers(tmp, vars);
   }

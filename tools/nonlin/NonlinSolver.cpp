@@ -28,7 +28,7 @@ int main (int argc, char ** argv)
 {
   if (getBoolValue("--help", false, argc, argv) || argc == 1){
     outs () <<
-        "* * *                              FreqHorn-Nonlin v.0.2 - Copyright (C) 2020                              * * *\n" <<
+        "* * *                              FreqHorn-Nonlin v.0.2 - Copyright (C) 2022                              * * *\n" <<
         "                                          Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqn [--help]                   show help\n" <<
@@ -41,7 +41,7 @@ int main (int argc, char ** argv)
   }
   int cex = getIntValue("--cex", 0, argc, argv);
   int str = getIntValue("--stren", 1, argc, argv);
-  int checkmax = getIntValue("--max", 1, argc, argv);
+  int checkmax = getIntValue("--max", 0, argc, argv);
   solveNonlin(string(argv[argc-1]), cex, str, checkmax);
   return 0;
 }
